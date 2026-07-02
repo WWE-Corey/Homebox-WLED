@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Homebox → HA bin locator webhook
-// @match        https://home.wwolf.us/*
+// @match        https://homebox.url/*
 // @grant        GM_xmlhttpRequest
-// @connect      ha.wwolf.us
-// @connect      home.wwolf.us
+// @connect      homeassistant.url
+// @connect      homebox.url
 // ==/UserScript==
 //
 // Watches which Homebox item/location page is open, resolves it to a
@@ -17,7 +17,7 @@
 // token if Homebox supports one.
 
 (function () {
-  const HA_WEBHOOK_URL = 'https://ha.wwolf.us/api/webhook/homebox-highlight';
+  const HA_WEBHOOK_URL = 'https://homeassistant.url/api/webhook/homebox-highlight';
   const HOMEBOX_API_TOKEN = 'your-api-token';
   let lastPath = '';
   const cache = {};
