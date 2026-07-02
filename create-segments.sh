@@ -4,7 +4,7 @@
 # by seg_id. Check `seglc` in /json/info before and after — it should show
 # 4 entries afterward.
 
-WLED_IP="192.168.30.35"
+WLED_IP="192.168.xx.xx"
 
 curl -X POST "http://${WLED_IP}/json/state" \
   -H "Content-Type: application/json" \
