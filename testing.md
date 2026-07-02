@@ -18,7 +18,7 @@ and watch payloads arrive live as you browse.
 Bypass the browser and fire a payload directly:
 
 ```bash
-curl -X POST https://ha.wwolf.us/api/webhook/homebox-highlight \
+curl -X POST https://homeassistant.url/api/webhook/homebox-highlight \
   -H "Content-Type: application/json" \
   -d '{"unit":"A2","code":"C-03"}'
 ```
