@@ -1,0 +1,14 @@
+{
+  "_comment": "Applied via POST http://<wled-ip>/json/cfg — confirmed working on GLEDOPTO GL-C-618WL (Ethernet variant). Pins are board-specific fixed channels; do not change without confirming against your own board's documentation.",
+  "hw": {
+    "led": {
+      "total": 189,
+      "ins": [
+        { "start": 0,   "len": 42, "pin": [16], "order": 0, "rev": false, "type": 22 },
+        { "start": 42,  "len": 42, "pin": [12], "order": 0, "rev": false, "type": 22 },
+        { "start": 84,  "len": 42, "pin": [4],  "order": 0, "rev": false, "type": 22 },
+        { "start": 126, "len": 63, "pin": [2],  "order": 0, "rev": false, "type": 22 }
+      ]
+    }
+  }
+}

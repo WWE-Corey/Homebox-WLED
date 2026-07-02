@@ -1,0 +1,66 @@
+# Add via Settings → Automations & Scenes → Create Automation → Edit in
+# YAML, or paste directly into automations.yaml.
+#
+# webhook_id is effectively a shared secret — the only thing gating this
+# endpoint if local_only is false. Use a long random string, not the
+# literal value below.
+#
+# local_only: false is required if Home Assistant is reachable through a
+# public domain/tunnel (e.g. https://ha.example.com) — even requests
+# originating from your own LAN will arrive looking "non-local" once they
+# round-trip through a public hostname, and local_only: true will silently
+# drop them with no error logged.
+
+alias: "Homebox bin highlight"
+trigger:
+  - platform: webhook
+    webhook_id: homebox-highlight
+    allowed_methods: [POST]
+    local_only: false
+action:
+  - variables:
+      unit: "{{ trigger.get('json', {}).get('unit', '') | upper | trim }}"
+      code: "{{ trigger.get('json', {}).get('code', '') | upper | trim }}"
+      row_map: {A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7}
+      unit_map:
+        A: {seg: 0, pos: 0}
+        B: {seg: 0, pos: 1}
+        C: {seg: 1, pos: 0}
+        D: {seg: 1, pos: 1}
+        E: {seg: 2, pos: 0}
+        I: {seg: 2, pos: 1}
+        F: {seg: 3, pos: 0}
+        G: {seg: 3, pos: 1}
+        H: {seg: 3, pos: 2}
+      unit_letter: "{{ unit[0] if unit | length == 2 else '' }}"
+      unit_number: "{{ unit[1] if unit | length == 2 else '' }}"
+      row_letter: "{{ code[0] if code | length == 4 else '' }}"
+      col_number: "{{ code[2:4] if code | length == 4 else '' }}"
+      unit_valid: "{{ unit_letter in unit_map and unit_number in ['1', '2'] }}"
+      code_valid: >-
+        {{ code | length == 4 and code[1] == '-' and row_letter in row_map
+           and col_number.isdigit() and 1 <= col_number | int <= 8 }}
+      row_valid: >-
+        {{ code_valid and unit_valid and (
+           (unit_number == '1' and row_map[row_letter] <= 7) or
+           (unit_number == '2' and row_map[row_letter] <= 4)
+        ) }}
+      is_valid: "{{ unit_valid and code_valid and row_valid }}"
+      pair_offset: "{{ (unit_map[unit_letter].pos * 21) if is_valid else none }}"
+      seg_id: "{{ unit_map[unit_letter].seg if is_valid else none }}"
+      x_index: "{{ (pair_offset + 8 - (col_number | int)) if is_valid else none }}"
+      y_index: >-
+        {{ (pair_offset + 8 + row_map[row_letter]) if (is_valid and unit_number == '1')
+           else (pair_offset + 16 + row_map[row_letter]) if (is_valid and unit_number == '2')
+           else none }}
+  - service: rest_command.wled_clear_all
+  - if:
+      - condition: template
+        value_template: "{{ is_valid }}"
+    then:
+      - service: rest_command.wled_set_xy
+        data:
+          seg_id: "{{ seg_id }}"
+          x_index: "{{ x_index }}"
+          y_index: "{{ y_index }}"
+          color: "FF3B00"

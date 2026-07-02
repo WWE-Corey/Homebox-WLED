@@ -1,0 +1,17 @@
+# Add to configuration.yaml (or split into a packages file).
+# Replace the URL with your WLED controller's actual address.
+# After editing, reload via Developer Tools → YAML → RELOAD REST COMMAND
+# ENTITIES — no full HA restart needed.
+
+rest_command:
+  wled_clear_all:
+    url: "http://192.168.30.35/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: '{"seg":[{"id":0,"i":[0,42,"000000"]},{"id":1,"i":[0,42,"000000"]},{"id":2,"i":[0,42,"000000"]},{"id":3,"i":[0,63,"000000"]}]}'
+
+  wled_set_xy:
+    url: "http://192.168.30.35/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: '{"seg":[{"id":{{ seg_id }},"i":[{{ x_index }},"{{ color }}",{{ y_index }},"{{ color }}"]}]}'
