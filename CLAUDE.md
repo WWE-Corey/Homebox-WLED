@@ -1,0 +1,1 @@
+- Never add "Co-Authored-By: Claude" or any AI assistant tags to git commits or pull requests.

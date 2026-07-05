@@ -10,6 +10,12 @@
 # originating from your own LAN will arrive looking "non-local" once they
 # round-trip through a public hostname, and local_only: true will silently
 # drop them with no error logged.
+#
+# The userscript sends only a raw {type, id} pulled from the Homebox URL —
+# no Homebox credentials. This automation resolves that id to a unit +
+# drawer code itself, via rest_command.homebox_get_entity (see
+# rest_commands.yaml), chasing the item → location → parent chain exactly
+# like the old browser-side code used to.
 
 alias: "Homebox bin highlight"
 trigger:
@@ -19,39 +25,95 @@ trigger:
     local_only: false
 action:
   - variables:
-      unit: "{{ trigger.get('json', {}).get('unit', '') | upper | trim }}"
-      code: "{{ trigger.get('json', {}).get('code', '') | upper | trim }}"
+      req_type: "{{ trigger.get('json', {}).get('type', '') }}"
+      req_id: "{{ trigger.get('json', {}).get('id', '') }}"
+      item_resp: { content: {} }
+      location_resp: { content: {} }
+      parent_resp: { content: {} }
+
+  # If we were handed an item page, hop from item → its parent location.
+  - if:
+      - condition: template
+        value_template: "{{ req_type == 'item' and req_id | length > 0 }}"
+    then:
+      - service: rest_command.homebox_get_entity
+        data:
+          entity_id: "{{ req_id }}"
+        response_variable: item_resp
+        continue_on_error: true
+
+  - variables:
+      location_id: >-
+        {{ (item_resp.content.parent.id | default(''))
+           if req_type == 'item' else (req_id if req_type == 'location' else '') }}
+
+  - if:
+      - condition: template
+        value_template: "{{ location_id | length > 0 }}"
+    then:
+      - service: rest_command.homebox_get_entity
+        data:
+          entity_id: "{{ location_id }}"
+        response_variable: location_resp
+        continue_on_error: true
+
+  - variables:
+      code: "{{ (location_resp.content.name | default('')) | upper | trim }}"
+      parent_name: "{{ location_resp.content.parent.name | default('') }}"
+      parent_id: "{{ location_resp.content.parent.id | default('') }}"
+
+  # Location's parent only had an id, not an inlined name — one more hop.
+  - if:
+      - condition: template
+        value_template: "{{ parent_name | length == 0 and parent_id | length > 0 }}"
+    then:
+      - service: rest_command.homebox_get_entity
+        data:
+          entity_id: "{{ parent_id }}"
+        response_variable: parent_resp
+        continue_on_error: true
+      - variables:
+          parent_name: "{{ parent_resp.content.name | default('') }}"
+
+  - variables:
+      unit: "{{ parent_name | upper | trim }}"
       row_map: {A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7}
+      # offset = this column's starting LED within its segment (running
+      # total of the LED counts — 8 + rows1 + rows2 — of every column
+      # before it in the same segment). rows1/rows2 are that column's own
+      # top/bottom row counts; they are NOT uniform across columns.
       unit_map:
-        A: {seg: 0, pos: 0}
-        B: {seg: 0, pos: 1}
-        C: {seg: 1, pos: 0}
-        D: {seg: 1, pos: 1}
-        E: {seg: 2, pos: 0}
-        I: {seg: 2, pos: 1}
-        F: {seg: 3, pos: 0}
-        G: {seg: 3, pos: 1}
-        H: {seg: 3, pos: 2}
+        A: {seg: 0, offset: 0,  rows1: 8, rows2: 5}
+        B: {seg: 0, offset: 21, rows1: 7, rows2: 5}
+        C: {seg: 1, offset: 0,  rows1: 8, rows2: 5}
+        D: {seg: 1, offset: 21, rows1: 7, rows2: 5}
+        E: {seg: 2, offset: 0,  rows1: 7, rows2: 5}
+        I: {seg: 2, offset: 20, rows1: 6, rows2: 5}
+        F: {seg: 3, offset: 0,  rows1: 6, rows2: 5}
+        G: {seg: 3, offset: 19, rows1: 6, rows2: 5}
+        H: {seg: 3, offset: 38, rows1: 6, rows2: 5}
       unit_letter: "{{ unit[0] if unit | length == 2 else '' }}"
       unit_number: "{{ unit[1] if unit | length == 2 else '' }}"
       row_letter: "{{ code[0] if code | length == 4 else '' }}"
       col_number: "{{ code[2:4] if code | length == 4 else '' }}"
       unit_valid: "{{ unit_letter in unit_map and unit_number in ['1', '2'] }}"
+      rows1: "{{ unit_map[unit_letter].rows1 if unit_valid else none }}"
+      rows2: "{{ unit_map[unit_letter].rows2 if unit_valid else none }}"
       code_valid: >-
         {{ code | length == 4 and code[1] == '-' and row_letter in row_map
            and col_number.isdigit() and 1 <= col_number | int <= 8 }}
       row_valid: >-
         {{ code_valid and unit_valid and (
-           (unit_number == '1' and row_map[row_letter] <= 7) or
-           (unit_number == '2' and row_map[row_letter] <= 4)
+           (unit_number == '1' and row_map[row_letter] <= rows1 - 1) or
+           (unit_number == '2' and row_map[row_letter] <= rows2 - 1)
         ) }}
       is_valid: "{{ unit_valid and code_valid and row_valid }}"
-      pair_offset: "{{ (unit_map[unit_letter].pos * 21) if is_valid else none }}"
+      led_offset: "{{ unit_map[unit_letter].offset if is_valid else none }}"
       seg_id: "{{ unit_map[unit_letter].seg if is_valid else none }}"
-      x_index: "{{ (pair_offset + 8 - (col_number | int)) if is_valid else none }}"
+      x_index: "{{ (led_offset + 8 - (col_number | int)) if is_valid else none }}"
       y_index: >-
-        {{ (pair_offset + 8 + row_map[row_letter]) if (is_valid and unit_number == '1')
-           else (pair_offset + 16 + row_map[row_letter]) if (is_valid and unit_number == '2')
+        {{ (led_offset + 8 + row_map[row_letter]) if (is_valid and unit_number == '1')
+           else (led_offset + 8 + rows1 + row_map[row_letter]) if (is_valid and unit_number == '2')
            else none }}
   - service: rest_command.wled_clear_all
   - if:

@@ -9,10 +9,10 @@ WLED_IP="192.168.xx.xx"
 curl -X POST "http://${WLED_IP}/json/state" \
   -H "Content-Type: application/json" \
   -d '{"seg":[
-    {"id":0,"start":0,"stop":42},
-    {"id":1,"start":42,"stop":84},
-    {"id":2,"start":84,"stop":126},
-    {"id":3,"start":126,"stop":189}
+    {"id":0,"start":0,"stop":41},
+    {"id":1,"start":41,"stop":82},
+    {"id":2,"start":82,"stop":121},
+    {"id":3,"start":121,"stop":178}
   ]}'
 
 echo

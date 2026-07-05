@@ -2,16 +2,34 @@
 # Replace the URL with your WLED controller's actual address.
 # After editing, reload via Developer Tools → YAML → RELOAD REST COMMAND
 # ENTITIES — no full HA restart needed.
+#
+# homebox_get_entity is what replaced the browser-side Homebox API calls.
+# It needs a Homebox API token — generate one from a Homebox account and
+# store it in secrets.yaml as a full header value (never in the
+# userscript, never inline here):
+#
+#   homebox_auth_header: "Bearer hb_xxxxxxxxxxxxxxxx"
+#
+# Homebox has no read-only/scoped token option today (every token carries
+# the full access of the account that created it), so this token should
+# still be treated as full read/write access to your inventory — but it
+# now lives only in HA config, never in browser-visible script source.
 
 rest_command:
   wled_clear_all:
     url: "http://192.168.xx.x/json/state"
     method: POST
     content_type: "application/json"
-    payload: '{"seg":[{"id":0,"i":[0,42,"000000"]},{"id":1,"i":[0,42,"000000"]},{"id":2,"i":[0,42,"000000"]},{"id":3,"i":[0,63,"000000"]}]}'
+    payload: '{"seg":[{"id":0,"i":[0,41,"000000"]},{"id":1,"i":[0,41,"000000"]},{"id":2,"i":[0,39,"000000"]},{"id":3,"i":[0,57,"000000"]}]}'
 
   wled_set_xy:
     url: "http://192.168.xx.xx/json/state"
     method: POST
     content_type: "application/json"
     payload: '{"seg":[{"id":{{ seg_id }},"i":[{{ x_index }},"{{ color }}",{{ y_index }},"{{ color }}"]}]}'
+
+  homebox_get_entity:
+    url: "https://homebox.url/api/v1/entities/{{ entity_id }}"
+    method: GET
+    headers:
+      Authorization: !secret homebox_auth_header

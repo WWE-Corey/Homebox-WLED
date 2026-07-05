@@ -7,7 +7,9 @@ hardware powered on at all.
 
 Open DevTools (F12) → Network tab → filter for the webhook path →
 navigate between drawers in Homebox. Confirm outgoing POSTs appear with
-each navigation, and check their response status.
+each navigation, carrying `{"type":"location"|"item","id":"..."}`, and
+check their response status. The userscript no longer calls the Homebox
+API itself, so there's nothing to check on that side beyond the URL match.
 
 To decouple from Home Assistant entirely, temporarily point
 `HA_WEBHOOK_URL` at a throwaway [webhook.site](https://webhook.site) URL
@@ -15,24 +17,40 @@ and watch payloads arrive live as you browse.
 
 ## 2. Webhook → Home Assistant automation logic
 
-Bypass the browser and fire a payload directly:
+Bypass the browser and fire a payload directly. This exercises the full
+chain including the server-side Homebox lookups, so it needs a real
+location or item id from your Homebox instance:
 
 ```bash
 curl -X POST https://homeassistant.url/api/webhook/homebox-highlight \
   -H "Content-Type: application/json" \
-  -d '{"unit":"A2","code":"C-03"}'
+  -d '{"type":"location","id":"<a real location uuid, e.g. drawer C-03>"}'
 ```
 
 Then check **Settings → Automations & Scenes → this automation → ⋮ →
-Traces**. This shows every computed variable (`unit_valid`, `code_valid`,
-`is_valid`, `pair_offset`, `seg_id`, `x_index`, `y_index`) for that run —
-the most useful single test in the whole chain, since it validates all
-the coordinate math without touching WLED.
+Traces**. This shows every computed variable (`item_resp`, `location_resp`,
+`parent_resp`, `code`, `unit`, `unit_valid`, `code_valid`, `rows1`,
+`rows2`, `is_valid`, `led_offset`, `seg_id`, `x_index`, `y_index`) for
+that run — the most useful single test in the whole chain, since it
+validates the Homebox lookups and the coordinate math without touching
+WLED.
+
+To test just the coordinate math without hitting Homebox at all, you can
+temporarily fire a payload that skips resolution — e.g. edit the
+automation's `location_id` variable to a hardcoded value in a scratch
+copy, or check the trace of a real run and read the `code`/`unit`
+variables it computed.
 
 Don't use the automation editor's "Run" button for this — it fakes a
 trigger context with no `json` key, which throws
 `UndefinedError: 'dict object' has no attribute 'json'`. That error is
 expected from a manual run and isn't a bug.
+
+If a Homebox lookup fails (bad token, wrong URL, id doesn't exist), the
+`rest_command.homebox_get_entity` step is set `continue_on_error: true`,
+so the automation still runs to completion and clears the strip
+(`is_valid` ends up `false`) rather than aborting partway through — check
+the trace's step statuses to see which lookup actually failed.
 
 ## 3. Home Assistant → WLED reachability
 
