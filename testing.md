@@ -58,7 +58,7 @@ the trace's step statuses to see which lookup actually failed.
 confirms basic reachability.
 
 **rest_command.wled_set_xy** in YAML mode with known-good test values (the
-A2/C-03 example from the README): `seg_id: 0, x_index: 5, y_index: 18,
+A2/C-03 example from the README): `seg_id: 0, x_index: 15, y_index: 2,
 color: "FF3B00"`.
 
 ## 4. WLED itself — works with zero LEDs physically connected
@@ -68,7 +68,7 @@ even with nothing wired to the data pins.
 
 ```bash
 curl http://<wled-ip>/json/info      # confirm reachable, check seglc has 4 entries
-curl http://<wled-ip>/json/cfg       # confirm hw.led.ins matches wled/bus-config.json
+curl http://<wled-ip>/json/cfg       # confirm hw.led.ins matches bus-config.json
 ```
 
 WLED's own web UI also has a live software preview of segment/pixel

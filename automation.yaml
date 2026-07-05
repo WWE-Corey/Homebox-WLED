@@ -58,7 +58,11 @@ action:
         continue_on_error: true
 
   - variables:
-      code: "{{ (location_resp.content.name | default('')) | upper | trim }}"
+      # Homebox location/unit names are "CODE description..." (e.g. "C-04
+      # M8 Hex Head Cap Screws", "A2 Metric") — only the leading code
+      # matters, so take just the prefix instead of requiring an exact
+      # length match on the whole name.
+      code: "{{ ((location_resp.content.name | default('')) | upper | trim)[:4] }}"
       parent_name: "{{ location_resp.content.parent.name | default('') }}"
       parent_id: "{{ location_resp.content.parent.id | default('') }}"
 
@@ -76,7 +80,7 @@ action:
           parent_name: "{{ parent_resp.content.name | default('') }}"
 
   - variables:
-      unit: "{{ parent_name | upper | trim }}"
+      unit: "{{ (parent_name | upper | trim)[:2] }}"
       row_map: {A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7}
       # offset = this column's starting LED within its segment (running
       # total of the LED counts — 8 + rows1 + rows2 — of every column
@@ -93,10 +97,16 @@ action:
         G: {seg: 3, offset: 19, rows1: 6, rows2: 5}
         H: {seg: 3, offset: 38, rows1: 6, rows2: 5}
       unit_letter: "{{ unit[0] if unit | length == 2 else '' }}"
-      unit_number: "{{ unit[1] if unit | length == 2 else '' }}"
+      # HA auto-coerces template results that round-trip cleanly through
+      # int() into native ints (a lone digit like "2" becomes int 2,
+      # while "03" doesn't round-trip so it stays a string) — fighting
+      # that coercion is unreliable, so unit_number is made an explicit
+      # int here (0 = invalid sentinel) and compared as an int everywhere
+      # below, instead of against string literals '1'/'2'.
+      unit_number: "{{ (unit[1] | int(0)) if unit | length == 2 else 0 }}"
       row_letter: "{{ code[0] if code | length == 4 else '' }}"
       col_number: "{{ code[2:4] if code | length == 4 else '' }}"
-      unit_valid: "{{ unit_letter in unit_map and unit_number in ['1', '2'] }}"
+      unit_valid: "{{ unit_letter in unit_map and unit_number in [1, 2] }}"
       rows1: "{{ unit_map[unit_letter].rows1 if unit_valid else none }}"
       rows2: "{{ unit_map[unit_letter].rows2 if unit_valid else none }}"
       code_valid: >-
@@ -104,16 +114,19 @@ action:
            and col_number.isdigit() and 1 <= col_number | int <= 8 }}
       row_valid: >-
         {{ code_valid and unit_valid and (
-           (unit_number == '1' and row_map[row_letter] <= rows1 - 1) or
-           (unit_number == '2' and row_map[row_letter] <= rows2 - 1)
+           (unit_number == 1 and row_map[row_letter] <= rows1 - 1) or
+           (unit_number == 2 and row_map[row_letter] <= rows2 - 1)
         ) }}
       is_valid: "{{ unit_valid and code_valid and row_valid }}"
       led_offset: "{{ unit_map[unit_letter].offset if is_valid else none }}"
       seg_id: "{{ unit_map[unit_letter].seg if is_valid else none }}"
-      x_index: "{{ (led_offset + 8 - (col_number | int)) if is_valid else none }}"
+      # Strip starts at each column's bottom-left LED (index 0 = bottom
+      # row of the bottom unit) and ends at top-right (index = block's
+      # last LED = column 8) — the reverse of the old top-right start.
+      x_index: "{{ (led_offset + rows1 + rows2 - 1 + (col_number | int)) if is_valid else none }}"
       y_index: >-
-        {{ (led_offset + 8 + row_map[row_letter]) if (is_valid and unit_number == '1')
-           else (led_offset + 8 + rows1 + row_map[row_letter]) if (is_valid and unit_number == '2')
+        {{ (led_offset + rows1 + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 1)
+           else (led_offset + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 2)
            else none }}
   - service: rest_command.wled_clear_all
   - if:

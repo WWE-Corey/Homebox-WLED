@@ -23,7 +23,8 @@
       method: 'POST',
       url: HA_WEBHOOK_URL,
       headers: { 'Content-Type': 'application/json' },
-      data: JSON.stringify(payload || { type: null, id: null })
+      data: JSON.stringify(payload || { type: null, id: null }),
+      onerror: (err) => console.error('[homebox-wled] webhook request failed', err)
     });
   }
 

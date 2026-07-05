@@ -65,20 +65,22 @@ length and the top/bottom boundary both vary per column:
 | I | 6 | 5 | 11 | 19 |
 
 Bottom-unit row count happens to be 5 everywhere; only the top unit's row
-count varies (6, 7, or 8). Each column is still wired X first then Y so
+count varies (6, 7, or 8). Each column is still wired Y first then X so
 the strip wraps the corner without doubling back — it's just a
 column-specific total instead of a fixed 21.
 
-### Why X runs right-to-left
+### Why each column starts at bottom-left
 
-The X strip was originally wired left→right (column 01→08), which meant
-the wire had to double back across the top of the unit to reach the start
-of the Y strip. Reversing X to run right→left (column 08→01) means LED 7
-(column 01) lands physically adjacent to LED 8 (row A) — the strip just
-wraps the corner. This is why the column-to-index formula is
-`8 - column_number` rather than `column_number - 1`.
-
-See `docs/led-order-diagram.md` for the worked-out layout.
+Each column's strip starts at LED index 0 = the **bottom-left** corner
+(bottom row of the bottom unit) and ends at **top-right** (column 8, the
+last LED in the block). Y is wired first, running bottom→top through the
+bottom unit's rows then continuing up through the top unit's rows; X is
+wired last, running left→right (column 01→08) across the top. The two
+axes meet at the top-left corner — the top unit's row A (Y's last LED) is
+physically adjacent to column 01 (X's first LED) — so the strip wraps
+that corner without doubling back. This is why the row-to-index and
+column-to-index formulas count *down* from `rows1 + rows2 - 1` rather
+than counting up from 0.
 
 ### Unit-pair → WLED channel assignment
 
@@ -98,9 +100,11 @@ A column's offset is just the sum of the LED counts of every column
 before it in the same segment — e.g. I's offset is 20 because E (its
 segment-mate) is 8 X + 7 top + 5 bottom = 20 LEDs.
 
-Within a column's block: indices `0–7` = X, `8` to `8+rows1-1` = Y (top
-unit), the rest = Y (bottom unit) — where `rows1` is that column's
-specific top-row count from the table above.
+Within a column's block: indices `0` to `rows2-1` = Y (bottom unit,
+bottom row first), `rows2` to `rows1+rows2-1` = Y (top unit, ending at
+its topmost row), the rest = X (column 01 first, column 08 last) — where
+`rows1`/`rows2` are that column's specific row counts from the table
+above.
 
 ### Full coordinate formula
 
@@ -117,16 +121,41 @@ led_offset  = unit_map[unit_letter].offset  # this column's starting LED, within
 rows1       = unit_map[unit_letter].rows1   # this column's top-unit row count (6, 7, or 8)
 rows2       = unit_map[unit_letter].rows2   # this column's bottom-unit row count (always 5)
 
-x_index = led_offset + (8 - col_number)
+x_index = led_offset + (rows1 + rows2 - 1) + col_number
 
-y_index = led_offset + 8         + row_index   if unit_number == 1  (top unit)
-        = led_offset + 8 + rows1 + row_index   if unit_number == 2  (bottom unit)
+y_index = led_offset + (rows1 + rows2 - 1) - row_index   if unit_number == 1  (top unit)
+        = led_offset + rows2 - 1           - row_index   if unit_number == 2  (bottom unit)
 ```
+
+Index 0 of a column's block is its bottom-left LED (bottom unit, last
+row); the last index is its top-right LED (column 08). This is the
+reverse of the block-relative order used before this strip direction was
+flipped.
 
 `row_index` must additionally be validated against that column's own
 `rows1`/`rows2` (e.g. column B's top unit only has rows A–G valid, not
 A–H) — a row letter that's in-range for column A can be out-of-range for
 column B.
+
+### Gotchas found the hard way
+
+- **Homebox names aren't bare codes.** Real locations are named things
+  like `"C-04 M8 Hex Head Cap Screws"` and units like `"A2 Metric"` — the
+  code/unit is only the *leading* prefix, followed by a space and a
+  description. The automation takes `name[:4]` / `parent_name[:2]` rather
+  than requiring the whole name to match, so descriptive suffixes are
+  ignored rather than causing a silent failure. See `code`/`unit` in
+  `automation.yaml`.
+- **Home Assistant silently turns some template results into numbers.**
+  If a template's entire rendered output round-trips cleanly through
+  `int()` (e.g. `"2"`), HA stores it as a native int instead of a string —
+  but a value like `"03"` doesn't round-trip (it'd lose the leading zero)
+  so it stays a string. This byte-for-byte inconsistency broke
+  `unit_number in ['1', '2']` (comparing an int against string literals
+  always fails) even though everything else was correct. Rather than
+  fight the coercion, `unit_number` is deliberately cast with `| int(0)`
+  and compared against integers (`in [1, 2]`) everywhere in the
+  automation — see the comment above `unit_number` in `automation.yaml`.
 
 ## Hardware
 
@@ -139,23 +168,24 @@ column B.
 - Ethernet variant reserves GPIOs `21,19,22,25,26,27,5,23,33,0` for RMII —
   worth knowing if you ever add hardware to this board.
 
-See `wled/bus-config.json` for the full applied configuration, and
-`wled/apply-bus-config.sh` to push it to the controller and reboot.
+See `bus-config.json` for the full applied configuration, and
+`apply-bus-config.sh` to push it to the controller and reboot.
 
 ## Setup order
 
-1. **WLED**: run `wled/apply-bus-config.sh` to push the 4-bus config
-   (`wled/bus-config.json`) and reboot, then run `wled/create-segments.sh`
+1. **WLED**: run `apply-bus-config.sh` to push the 4-bus config
+   (`bus-config.json`) and reboot, then run `create-segments.sh`
    to create the 4 segments. Confirm with `GET /json/info` — `seglc`
    should show 4 entries.
-2. **Home Assistant**: add the `rest_command`s and the automation
-   (`home-assistant/`), and add your Homebox API token to `secrets.yaml`
-   as `homebox_auth_header` (see comments in `rest_commands.yaml`).
+2. **Home Assistant**: add the `rest_command`s (`rest_commands.yaml`) and
+   the automation (`automation.yaml`), and add your Homebox API token to
+   `secrets.yaml` as `homebox_auth_header` (see comments in
+   `rest_commands.yaml`).
 3. **Tampermonkey**: install the userscript on each device
-   (`tampermonkey/homebox-wled.user.js`), filling in your own domains. No
+   (`homebox-wled.user.js`), filling in your own domains. No
    API token needed here — it never leaves Home Assistant.
 4. **Verify layer by layer** before wiring real LEDs — see
-   `docs/testing.md`.
+   `testing.md`.
 5. **Confirm physical LED order** once LEDs are wired, by stepping through
    indices 0–20 on one segment and noting what actually lights up. Any
    mismatch with the assumed order is a one-time offset/direction fix, not
@@ -163,15 +193,20 @@ See `wled/bus-config.json` for the full applied configuration, and
 
 ## Known open items
 
-- [ ] Confirm physical LED order matches the assumed wiring (X
-      right-to-left, then Y top-unit-first) once LEDs are physically
-      installed — see the coordinate formula assumptions above.
-- [ ] Confirm all 64+ Homebox drawer locations follow the strict
-      `LETTER-NN` naming convention; anything that doesn't will silently
-      fail to highlight.
+- [ ] Confirm physical LED order matches the assumed wiring (Y
+      bottom-to-top through the bottom unit then the top unit, then X
+      left-to-right across the top) once LEDs are physically installed —
+      see the coordinate formula assumptions above.
+- [x] ~~Confirm all 64+ Homebox drawer locations follow the strict
+      `LETTER-NN` naming convention~~ — they don't; real names are
+      descriptive (`"C-04 M8 Hex Head Cap Screws"`, `"A2 Metric"`). Fixed
+      by taking just the leading prefix instead of requiring an exact
+      match (see the Gotchas section above). Still assumes the code is
+      followed by a space or nothing — a name like `"C-041 ..."` with no
+      separator would misparse.
 - [x] ~~Consider scoping the Homebox API token down from full access~~ —
       Homebox has no scoped/read-only token support today, so instead the
       token was moved out of the browser script entirely and into HA's
       `secrets.yaml`; HA now does all Homebox API resolution server-side
-      (see `home-assistant/automation.yaml`). It's still a full-access
-      token, but it's no longer visible via browser dev tools.
+      (see `automation.yaml`). It's still a full-access token, but it's
+      no longer visible via browser dev tools.
