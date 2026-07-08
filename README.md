@@ -188,6 +188,76 @@ column B.
   fight the coercion, `unit_number` is deliberately cast with `| int(0)`
   and compared against integers (`in [1, 2]`) everywhere in the
   automation — see the comment above `unit_number` in `automation.yaml`.
+- **The opposite problem hits dict keys.** HA's UI-managed automation
+  storage round-trips the whole config through JSON at some point, and
+  JSON object keys are always strings — so int keys written in YAML
+  (`1: [...]`, `8: {...}`) silently became `"1"`, `"8"` after saving,
+  breaking lookups like `(col_number | int) in bottom_col_map` even
+  though the key was plainly visible in the trace. `normal_col_map` /
+  `merged_col_map` / `bottom_col_map` / `top_row_mode` are now defined
+  with explicit string keys, and every lookup normalizes its key with
+  `| string` to match — see `automation.yaml`.
+- **`wait_for_trigger` listening for the same event as the automation's
+  own trigger is a trap.** The idle timeout was first built with
+  `mode: restart` plus `wait_for_trigger` steps waiting on the same
+  webhook the automation itself triggers on, on the theory that a new
+  webhook call would always cancel the current run and restart from the
+  top. In practice, a new call could instead get silently absorbed by the
+  pending `wait_for_trigger` (resolving it as a normal completion rather
+  than triggering a restart) — the automation just ended without
+  redoing the highlight, and the *next* navigation was the one that
+  actually worked. Switching the idle triggers to watch a separate
+  `input_number` counter (bumped on every webhook call) instead of
+  re-listening for the webhook itself avoids the ambiguity entirely —
+  see the idle timeout comment block at the top of `automation.yaml`.
+- **Setting individual pixels freezes the segment, silently blocking
+  effects afterward.** WLED's JSON `"i"` array (used by `wled_clear_all`
+  and `wled_set_xy` to light specific LEDs) implicitly sets that
+  segment's `"frz"` (freeze) flag, which holds that exact static frame
+  and stops the effect engine from rendering — permanently, until
+  something explicitly clears it. The first two attempts at the scanner
+  set `fx`/`col`/`sx`/`ix` correctly (WLED's own UI even showed "Scan"
+  selected) but nothing visibly animated, because the segment was still
+  frozen from the highlight that came before it. `wled_start_scan` now
+  explicitly sets `"frz":false` on every segment — see
+  `rest_commands.yaml`.
+
+## Idle behavior
+
+If nothing happens for a while after a drawer is highlighted (or
+cleared), the strip winds down in two stages instead of just sitting lit
+indefinitely:
+
+- **5 minutes idle** → every segment switches to WLED's built-in `fx: 10`
+  ("Scan" — a single dot bouncing back and forth, Larson-scanner/Cylon/
+  KITT style) in the currently selected color, across all 9 columns at
+  once.
+- **30 minutes idle** → the whole WLED device powers off (`"on": false`).
+
+"Idle" means no webhook call at all — highlighting a new drawer *or*
+clearing (navigating away) both count as activity and reset both clocks.
+
+This is implemented with three separate triggers sharing one automation
+(`mode: restart`), branched with `choose:` + a `condition: trigger, id:
+...` check per branch:
+
+- `id: webhook` — the normal highlight/clear path. Also increments
+  `input_number.homebox_activity` (`input_helpers.yaml`) on every call.
+- `id: idle_scan` — a `state` trigger on that same counter with `for:
+  minutes: 5`. Starts the scan effect.
+- `id: idle_off` — the same counter, `for: minutes: 30`. Powers off.
+
+The counter's actual value is meaningless — it exists purely so the two
+`state` triggers have something to watch that reliably changes on every
+real webhook call, resetting their `for:` timers. A normal highlight run
+always explicitly turns the device back on and resets every segment's
+effect to `fx: 0` (Solid) first, in case a previous idle cycle had put it
+to sleep or left the scanner running.
+
+The highlight color (and the scanner's color) is chosen via the
+`input_select.homebox_highlight_color` helper (`input_helpers.yaml`) —
+add an entry to both `input_helpers.yaml`'s `options` and
+`automation.yaml`'s `color_map` to offer another color.
 
 ## Hardware
 
@@ -209,8 +279,9 @@ See `bus-config.json` for the full applied configuration, and
    (`bus-config.json`) and reboot, then run `create-segments.sh`
    to create the 4 segments. Confirm with `GET /json/info` — `seglc`
    should show 4 entries.
-2. **Home Assistant**: add the `rest_command`s (`rest_commands.yaml`) and
-   the automation (`automation.yaml`), and add your Homebox API token to
+2. **Home Assistant**: add the `rest_command`s (`rest_commands.yaml`), the
+   `input_select`/`input_number` helpers (`input_helpers.yaml`), and the
+   automation (`automation.yaml`), and add your Homebox API token to
    `secrets.yaml` as `homebox_auth_header` (see comments in
    `rest_commands.yaml`).
 3. **Tampermonkey**: install the userscript on each device

@@ -1,0 +1,35 @@
+# Add to configuration.yaml (or split into a packages file), alongside
+# rest_commands.yaml and automation.yaml.
+#
+# homebox_highlight_color picks the highlight/scanner color. Names here
+# must exactly match the keys of `color_map` in automation.yaml — add an
+# entry to both to offer another color.
+#
+# homebox_activity is bumped by 1 on every real webhook call (see
+# automation.yaml) purely so its `idle_scan`/`idle_off` triggers have a
+# state change to measure "5/30 minutes since" from — the number itself
+# is meaningless, it's just a reliable, always-distinct value to watch.
+
+input_select:
+  homebox_highlight_color:
+    name: Homebox Highlight Color
+    icon: mdi:palette
+    options:
+      - Red
+      - Orange
+      - Yellow
+      - Green
+      - Blue
+      - Purple
+      - White
+      - Cyan
+    initial: Red
+
+input_number:
+  homebox_activity:
+    name: Homebox Activity Counter
+    icon: mdi:counter
+    min: 0
+    max: 999999999
+    step: 1
+    mode: box

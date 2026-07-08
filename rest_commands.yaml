@@ -20,7 +20,12 @@ rest_command:
     url: "http://192.168.xx.x/json/state"
     method: POST
     content_type: "application/json"
-    payload: '{"seg":[{"id":0,"i":[0,41,"000000"]},{"id":1,"i":[0,41,"000000"]},{"id":2,"i":[0,39,"000000"]},{"id":3,"i":[0,57,"000000"]}]}'
+    # "on":true and "fx":0 (Solid) undo whatever a previous idle-timeout
+    # run left behind — the Scan effect (see wled_start_scan) keeps
+    # repainting the strip every frame, so individual "i" pixel writes
+    # wouldn't visibly stick unless the effect is switched off first, and
+    # a 30-minute power-off (see wled_power_off) needs explicitly undoing.
+    payload: '{"on":true,"seg":[{"id":0,"fx":0,"i":[0,41,"000000"]},{"id":1,"fx":0,"i":[0,41,"000000"]},{"id":2,"fx":0,"i":[0,39,"000000"]},{"id":3,"fx":0,"i":[0,57,"000000"]}]}'
 
   wled_set_xy:
     url: "http://192.168.xx.xx/json/state"
@@ -29,6 +34,37 @@ rest_command:
     # x_indices is a list of 1 or 2 LEDs (wide/merged bins light both) —
     # the loop below emits an "index,color" pair per entry before the Y pair.
     payload: '{"seg":[{"id":{{ seg_id }},"i":[{% for x in x_indices %}{{ x }},"{{ color }}",{% endfor %}{{ y_index }},"{{ color }}"]}]}'
+
+  # fx 10 = WLED's built-in "Scan" effect (a single dot bouncing back and
+  # forth — Larson scanner / Cylon / KITT style), applied to all 4
+  # segments at once so the whole install animates, not just one column.
+  # "col" wants an RGB int triplet, not a hex string (unlike the "i"
+  # array above), hence the r/g/b split in automation.yaml.
+  #
+  # "frz":false is required — setting individual pixels via "i" (as
+  # wled_clear_all/wled_set_xy do) implicitly freezes the segment, which
+  # holds that static frame and stops the effect engine from rendering
+  # at all. Without explicitly unfreezing here, fx/col/sx/ix all get set
+  # correctly (WLED's own UI shows "Scan" selected) but nothing visibly
+  # animates, since the frozen static frame just keeps being displayed
+  # instead.
+  wled_start_scan:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {"on":true,"seg":[
+      {"id":0,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":1,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":2,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":3,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]}
+      ]}
+
+  wled_power_off:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: '{"on":false}'
 
   homebox_get_entity:
     url: "https://homebox.url/api/v1/entities/{{ entity_id }}"

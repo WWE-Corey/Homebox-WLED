@@ -82,9 +82,9 @@ useful for visually confirming which index lit up before any LEDs exist.
 ## 5. Physical LED order (requires real hardware)
 
 The only thing that can't be verified without real LEDs: whether the
-strip is actually wired in the assumed order (X right-to-left, then Y
-top-unit-first). Step through one full pair and note what lights up at
-each index:
+strip is actually wired in the assumed order (bottom-to-top through the
+bottom unit, then the top unit, then left-to-right across the X row).
+Step through one full pair and note what lights up at each index:
 
 ```bash
 for i in $(seq 0 20); do
@@ -97,3 +97,38 @@ done
 
 Any mismatch with the assumed order (see README's coordinate formula) is
 a one-time offset/direction correction, not a redesign.
+
+## 6. Idle timeout (scanner + power-off)
+
+Waiting a real 5 or 30 minutes every test run isn't practical, so test
+the two pieces independently instead of end-to-end:
+
+**The effects themselves**, without waiting at all — call these directly
+via **Developer Tools → Actions**:
+
+- `rest_command.wled_start_scan` with `r: 255, g: 0, b: 0` — every
+  segment should immediately switch to a bouncing-dot scan in red.
+- `rest_command.wled_power_off` with no data — the whole device should
+  go dark and unresponsive to `wled_set_xy` until powered back on.
+- `rest_command.wled_clear_all` with no data — should both power the
+  device back on and stop any running scan (`fx` reset to Solid/0).
+
+**The timeout logic itself**: temporarily lower the two `for:` durations
+in `automation.yaml`'s `idle_scan`/`idle_off` triggers (e.g. `seconds: 20`
+/ `seconds: 40` instead of `minutes: 5` / `minutes: 30`), fire a real
+webhook payload (per test 2), and watch **Developer Tools → States** for
+`input_number.homebox_activity` — it should bump by 1 immediately, then
+(after your shortened duration) a *new* automation trace should appear
+triggered by `idle_scan`, and later one triggered by `idle_off`. Revert
+the durations afterward.
+
+**Confirming a real navigation actually interrupts a running scan**: while
+the scanner is active (or during a shortened test wait), send another
+real webhook call and check that the LEDs immediately show the new
+highlight — not a scan that keeps running until some later action. If
+this doesn't work on the first call and needs a second one to take
+effect, that's the exact `wait_for_trigger`-on-the-same-event bug
+documented in the README's Gotchas section — the fix was moving off
+`wait_for_trigger` entirely in favor of the `input_number` counter +
+separate `state` triggers, so this shouldn't reappear, but it's the thing
+to watch for if the idle logic is ever changed again.
