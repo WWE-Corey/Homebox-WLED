@@ -111,19 +111,54 @@ action:
       rows2: "{{ unit_map[unit_letter].rows2 if unit_valid else none }}"
       code_valid: >-
         {{ code | length == 4 and code[1] == '-' and row_letter in row_map
-           and col_number.isdigit() and 1 <= col_number | int <= 8 }}
+           and col_number.isdigit() }}
+      # Column layout is not uniform 8-across everywhere — some rows use
+      # physically wider bins that each span 2 of the underlying 8 (top)
+      # or merge the two end slots (bottom). Each entry maps a Homebox
+      # column code to the list of physical X slot(s) [1-8] it lights.
+      normal_col_map: {1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6], 7: [7], 8: [8]}
+      merged_col_map: {1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]}
+      bottom_col_map: {1: [1, 2], 2: [3], 3: [4], 4: [5], 5: [6], 6: [7, 8]}
+      # Which column map each top-unit row uses, keyed by that column's
+      # rows1 (8/7/6 uniquely identifies the A1/C1, B1/D1/E1, and
+      # F1/G1/H1/I1 layouts respectively): rows1=8 units are normal all
+      # the way down; rows1=7 units switch to merged for their last 3
+      # rows (E-G); rows1=6 units are merged for every row (A-F).
+      top_row_mode:
+        8: {A: normal, B: normal, C: normal, D: normal, E: normal, F: normal, G: normal, H: normal}
+        7: {A: normal, B: normal, C: normal, D: normal, E: merged, F: merged, G: merged}
+        6: {A: merged, B: merged, C: merged, D: merged, E: merged, F: merged}
+      col_mode: >-
+        {{ top_row_mode.get(rows1, {}).get(row_letter, '') if (unit_valid and unit_number == 1)
+           else 'bottom' if (unit_valid and unit_number == 2)
+           else '' }}
+      active_col_map: >-
+        {{ normal_col_map if col_mode == 'normal'
+           else merged_col_map if col_mode == 'merged'
+           else bottom_col_map if col_mode == 'bottom'
+           else none }}
+      # Rather than a numeric range, a code is valid iff it's a key in
+      # whichever column map applies — this naturally handles the
+      # different code counts (8, 6, or 4) per layout.
+      col_valid: "{{ code_valid and active_col_map is not none and (col_number | int) in active_col_map }}"
       row_valid: >-
         {{ code_valid and unit_valid and (
            (unit_number == 1 and row_map[row_letter] <= rows1 - 1) or
            (unit_number == 2 and row_map[row_letter] <= rows2 - 1)
         ) }}
-      is_valid: "{{ unit_valid and code_valid and row_valid }}"
+      is_valid: "{{ unit_valid and code_valid and col_valid and row_valid }}"
       led_offset: "{{ unit_map[unit_letter].offset if is_valid else none }}"
       seg_id: "{{ unit_map[unit_letter].seg if is_valid else none }}"
+      physical_slots: "{{ active_col_map[col_number | int] if is_valid else [] }}"
       # Strip starts at each column's bottom-left LED (index 0 = bottom
       # row of the bottom unit) and ends at top-right (index = block's
       # last LED = column 8) — the reverse of the old top-right start.
-      x_index: "{{ (led_offset + rows1 + rows2 - 1 + (col_number | int)) if is_valid else none }}"
+      x_base: "{{ (led_offset + rows1 + rows2 - 1) if is_valid else none }}"
+      # 1 or 2 LEDs depending on whether this code hit a wide/merged bin.
+      x_indices: >-
+        {{ [x_base + physical_slots[0]] if physical_slots | length == 1
+           else [x_base + physical_slots[0], x_base + physical_slots[1]] if physical_slots | length == 2
+           else [] }}
       y_index: >-
         {{ (led_offset + rows1 + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 1)
            else (led_offset + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 2)
@@ -136,6 +171,6 @@ action:
       - service: rest_command.wled_set_xy
         data:
           seg_id: "{{ seg_id }}"
-          x_index: "{{ x_index }}"
+          x_indices: "{{ x_indices }}"
           y_index: "{{ y_index }}"
           color: "FF3B00"

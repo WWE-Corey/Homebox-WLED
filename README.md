@@ -106,6 +106,35 @@ its topmost row), the rest = X (column 01 first, column 08 last) — where
 `rows1`/`rows2` are that column's specific row counts from the table
 above.
 
+### Column layout: not every bin is 1 column wide
+
+The X axis isn't a uniform 8-narrow-columns-per-row layout either. Some
+rows use physically wider bins that each span 2 of the underlying 8 X
+slots, so a single Homebox code lights **two** X LEDs, not one:
+
+- **Bottom units** (`rows2 = 5`, identical across all 9 columns): rows
+  A–E all use the same layout — codes `01`–`06`, where `01` spans slots
+  1+2, `02`–`05` are single slots 3–6, and `06` spans slots 7+8. Only 6
+  codes exist, not 8.
+- **Top units**: which rows are wide depends on that column's `rows1`
+  (which uniquely identifies its layout — see the row-count table
+  above):
+  - `rows1 = 8` (columns A, C): every row (A–H) is normal — 8 single-slot
+    codes.
+  - `rows1 = 7` (columns B, D, E): rows A–D are normal (8 codes), but
+    rows E–G switch to wide bins — codes `01`–`04`, each spanning 2 slots
+    (1+2, 3+4, 5+6, 7+8).
+  - `rows1 = 6` (columns F, G, H, I): every row (A–F) uses the same wide,
+    4-code layout as above.
+
+This is fixed physical data, not something derivable from a formula, so
+it's a lookup table (`normal_col_map` / `merged_col_map` /
+`bottom_col_map`, selected via `top_row_mode[rows1][row_letter]` for top
+units or directly for bottom units) rather than arithmetic — see
+`automation.yaml`. A code's validity is "is this code a key in whichever
+map applies" rather than a numeric range check, which naturally handles
+the different code counts (8, 6, or 4) per layout.
+
 ### Full coordinate formula
 
 Given a Homebox location named e.g. `D-03` whose parent is named `A2`:
@@ -116,12 +145,15 @@ unit_number = 2          (A2's second character — which unit in the stack)
 row_letter  = D          (D-03's first character)
 col_number  = 03         (D-03's last two characters)
 
-seg_id      = unit_map[unit_letter].seg     # which of the 4 WLED buses
-led_offset  = unit_map[unit_letter].offset  # this column's starting LED, within its segment
-rows1       = unit_map[unit_letter].rows1   # this column's top-unit row count (6, 7, or 8)
-rows2       = unit_map[unit_letter].rows2   # this column's bottom-unit row count (always 5)
+seg_id         = unit_map[unit_letter].seg     # which of the 4 WLED buses
+led_offset     = unit_map[unit_letter].offset  # this column's starting LED, within its segment
+rows1          = unit_map[unit_letter].rows1   # this column's top-unit row count (6, 7, or 8)
+rows2          = unit_map[unit_letter].rows2   # this column's bottom-unit row count (always 5)
+active_col_map = the normal/merged/bottom map that applies to this row_letter + unit_number
+physical_slots = active_col_map[col_number]    # 1 or 2 physical X slots (1-8) this code lights
 
-x_index = led_offset + (rows1 + rows2 - 1) + col_number
+x_base    = led_offset + (rows1 + rows2 - 1)
+x_indices = [x_base + slot for slot in physical_slots]   # 1 or 2 LEDs
 
 y_index = led_offset + (rows1 + rows2 - 1) - row_index   if unit_number == 1  (top unit)
         = led_offset + rows2 - 1           - row_index   if unit_number == 2  (bottom unit)
@@ -197,6 +229,14 @@ See `bus-config.json` for the full applied configuration, and
       bottom-to-top through the bottom unit then the top unit, then X
       left-to-right across the top) once LEDs are physically installed —
       see the coordinate formula assumptions above.
+- [ ] Confirm the column-layout lookup tables (`normal_col_map` /
+      `merged_col_map` / `bottom_col_map` / `top_row_mode`) match reality
+      for every column — they're built from two reference images (one per
+      bottom-unit layout, one per each of the 3 top-unit layouts) rather
+      than exhaustively checked against all 9 columns' actual Homebox
+      codes. A location using a code the map doesn't expect (e.g. a `07`
+      on a wide-bin row that should only go up to `04`) will silently
+      fail validation rather than highlight the wrong LED.
 - [x] ~~Confirm all 64+ Homebox drawer locations follow the strict
       `LETTER-NN` naming convention~~ — they don't; real names are
       descriptive (`"C-04 M8 Hex Head Cap Screws"`, `"A2 Metric"`). Fixed

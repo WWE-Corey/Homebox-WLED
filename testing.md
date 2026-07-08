@@ -30,7 +30,8 @@ curl -X POST https://homeassistant.url/api/webhook/homebox-highlight \
 Then check **Settings → Automations & Scenes → this automation → ⋮ →
 Traces**. This shows every computed variable (`item_resp`, `location_resp`,
 `parent_resp`, `code`, `unit`, `unit_valid`, `code_valid`, `rows1`,
-`rows2`, `is_valid`, `led_offset`, `seg_id`, `x_index`, `y_index`) for
+`rows2`, `col_mode`, `active_col_map`, `col_valid`, `is_valid`,
+`led_offset`, `seg_id`, `physical_slots`, `x_indices`, `y_index`) for
 that run — the most useful single test in the whole chain, since it
 validates the Homebox lookups and the coordinate math without touching
 WLED.
@@ -58,8 +59,11 @@ the trace's step statuses to see which lookup actually failed.
 confirms basic reachability.
 
 **rest_command.wled_set_xy** in YAML mode with known-good test values (the
-A2/C-03 example from the README): `seg_id: 0, x_index: 15, y_index: 2,
-color: "FF3B00"`.
+A2/C-03 example — bottom unit, so code `03` resolves through
+`bottom_col_map` to physical slot 4, a single LED): `seg_id: 0,
+x_indices: [16], y_index: 2, color: "FF3B00"`. For a merged/wide-bin code
+(e.g. a `rows1=6` top unit), `x_indices` will have two entries instead of
+one — `wled_set_xy`'s payload loops over however many are given.
 
 ## 4. WLED itself — works with zero LEDs physically connected
 

@@ -26,7 +26,9 @@ rest_command:
     url: "http://192.168.xx.xx/json/state"
     method: POST
     content_type: "application/json"
-    payload: '{"seg":[{"id":{{ seg_id }},"i":[{{ x_index }},"{{ color }}",{{ y_index }},"{{ color }}"]}]}'
+    # x_indices is a list of 1 or 2 LEDs (wide/merged bins light both) —
+    # the loop below emits an "index,color" pair per entry before the Y pair.
+    payload: '{"seg":[{"id":{{ seg_id }},"i":[{% for x in x_indices %}{{ x }},"{{ color }}",{% endfor %}{{ y_index }},"{{ color }}"]}]}'
 
   homebox_get_entity:
     url: "https://homebox.url/api/v1/entities/{{ entity_id }}"
