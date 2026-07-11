@@ -221,6 +221,42 @@ column B.
   frozen from the highlight that came before it. `wled_start_scan` now
   explicitly sets `"frz":false` on every segment — see
   `rest_commands.yaml`.
+- **A trigger's `for:` duration can't be templated.** Making the idle
+  delays configurable initially meant swapping the fixed `for: minutes: 5`
+  / `for: minutes: 30` on the `idle_scan`/`idle_off` `state` triggers for
+  `for: minutes: "{{ states('input_number...') }}"`. This looked
+  reasonable and matches how `wait_for_trigger`'s `timeout:` accepts
+  templates, but trigger `for:` durations don't — it's a genuinely open
+  Home Assistant feature request, not a mistake in the template syntax.
+  The idle timeout was rebuilt around a `time_pattern` trigger firing
+  every minute with the elapsed-time comparison done manually in the
+  action instead — see the Idle behavior section below.
+- **Helpers created via the HA UI get slugified entity IDs, not the ones
+  in `input_helpers.yaml`.** Creating a helper through Settings → Devices
+  & Services → Helpers generates its entity ID from the full friendly
+  `name:` text (e.g. "Homebox Activity Counter" →
+  `input_number.homebox_activity_counter`), not from any short key —
+  there's no YAML involved at all for a UI-created helper. Every one of
+  this project's helpers ended up under UI-slugified IDs that didn't
+  match what `automation.yaml` referenced, and `input_helpers.yaml`'s own
+  keys had to be renamed to match reality rather than the other way
+  around. If you create these via the UI instead of pasting
+  `input_helpers.yaml`, check Developer Tools → States for the actual
+  entity IDs before assuming they match what's referenced elsewhere.
+- **Powering on needs a moment to settle before pixel data lands.** After
+  a real 30-minute power-off, the first highlight following a new
+  navigation would power WLED back on but the pixel data wouldn't
+  render — only a second, separate command afterward would actually show
+  anything, even though the automation's own trace showed correct
+  `is_valid`/`seg_id`/`x_indices`/`y_index` and a real call to
+  `wled_set_xy` on the very first navigation. Splitting the power-on into
+  its own standalone `wled_power_on` request (instead of bundling
+  `"on":true` into `wled_clear_all`'s payload) wasn't enough by itself —
+  a short `delay` after that call, before `wled_clear_all` runs, was also
+  needed. That combination points at the LED output hardware itself
+  needing a moment after being re-enabled, not just a JSON API
+  request-bundling quirk — see `wled_power_on` in `rest_commands.yaml`
+  and the `delay` step right after it in `automation.yaml`.
 
 ## Idle behavior
 
@@ -228,36 +264,56 @@ If nothing happens for a while after a drawer is highlighted (or
 cleared), the strip winds down in two stages instead of just sitting lit
 indefinitely:
 
-- **5 minutes idle** → every segment switches to WLED's built-in `fx: 10`
-  ("Scan" — a single dot bouncing back and forth, Larson-scanner/Cylon/
-  KITT style) in the currently selected color, across all 9 columns at
-  once.
-- **30 minutes idle** → the whole WLED device powers off (`"on": false`).
+- **Idle for `homebox_idle_scan_delay`** (default 5) → every segment
+  switches to WLED's built-in `fx: 10` ("Scan" — a single dot bouncing
+  back and forth, Larson-scanner/Cylon/KITT style) in the currently
+  selected color, across all 9 columns at once.
+- **Idle for `homebox_idle_power_off_delay`** (default 30) → the whole WLED
+  device powers off (`"on": false`).
 
-"Idle" means no webhook call at all — highlighting a new drawer *or*
-clearing (navigating away) both count as activity and reset both clocks.
+Both delays are `input_number` helpers, adjustable live from the HA UI —
+no YAML edits needed. "Idle" means no webhook call at all — highlighting
+a new drawer *or* clearing (navigating away) both count as activity and
+reset the clock.
 
-This is implemented with three separate triggers sharing one automation
+This is implemented with two triggers sharing one automation
 (`mode: restart`), branched with `choose:` + a `condition: trigger, id:
 ...` check per branch:
 
 - `id: webhook` — the normal highlight/clear path. Also increments
-  `input_number.homebox_activity` (`input_helpers.yaml`) on every call.
-- `id: idle_scan` — a `state` trigger on that same counter with `for:
-  minutes: 5`. Starts the scan effect.
-- `id: idle_off` — the same counter, `for: minutes: 30`. Powers off.
+  `input_number.homebox_activity_counter` and resets the `homebox_scan_started_internal` /
+  `homebox_powered_off_internal` `input_boolean` flags on every call.
+- `id: idle_check` — a plain `time_pattern` trigger firing every minute.
+  The action computes minutes elapsed since `homebox_activity_counter`'s
+  `last_changed` timestamp and compares it against the two delay helpers
+  itself, rather than relying on a triggered `for:` duration.
 
-The counter's actual value is meaningless — it exists purely so the two
-`state` triggers have something to watch that reliably changes on every
-real webhook call, resetting their `for:` timers. A normal highlight run
-always explicitly turns the device back on and resets every segment's
-effect to `fx: 0` (Solid) first, in case a previous idle cycle had put it
-to sleep or left the scanner running.
+A trigger's `for:` duration can't be templated in Home Assistant (still
+an open feature request, not just an oversight) — that's why this isn't
+built as two `state` triggers with `for: minutes: "{{ ... }}"`, which is
+what a first pass at "configurable delays" would look like. The
+`homebox_scan_started_internal`/`homebox_powered_off_internal` flags exist so each stage
+only fires once per idle period; without them, the every-minute check
+would restart the scan effect's animation from scratch every single
+minute once idle (rewriting `fx` resets it) and spam `wled_power_off`
+indefinitely once past the off delay. The counter's actual value is
+otherwise meaningless — it's just a reliable, always-distinct thing to
+measure elapsed time from. A normal highlight run always explicitly
+turns the device back on and resets every segment's effect to `fx: 0`
+(Solid) first, in case a previous idle cycle had put it to sleep or left
+the scanner running.
 
 The highlight color (and the scanner's color) is chosen via the
 `input_select.homebox_highlight_color` helper (`input_helpers.yaml`) —
 add an entry to both `input_helpers.yaml`'s `options` and
-`automation.yaml`'s `color_map` to offer another color.
+`automation.yaml`'s `color_map` to offer another color. The scan
+effect's speed and tail size are tunable live from the HA UI via
+`input_number.homebox_scan_effect_speed` / `homebox_scan_effect_tail_size` (WLED's
+`sx`/`ix` segment params, 0-255) — no YAML edit needed to adjust them.
+All of these are `input_number`/`input_select` helpers, which persist
+whatever value you set across Home Assistant restarts automatically
+(HA's `RestoreEntity`); `initial:` in `input_helpers.yaml` only applies
+the very first time a helper is created.
 
 ## Hardware
 

@@ -16,16 +16,31 @@
 # now lives only in HA config, never in browser-visible script source.
 
 rest_command:
+  # A discrete, standalone request — deliberately not folded into
+  # wled_clear_all's payload. After a real 30-minute power-off, the first
+  # highlight following a navigation would power WLED back on but the
+  # pixel data wouldn't render — only a second, separate command
+  # afterward would actually show anything. Splitting "on":true into its
+  # own request wasn't sufficient by itself either; a short delay after
+  # this call (see automation.yaml, right after rest_command.wled_power_on)
+  # was also needed. That combination points at the LED output hardware
+  # itself needing a moment to settle after being re-enabled, not just a
+  # JSON API request-bundling quirk.
+  wled_power_on:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: '{"on":true}'
+
   wled_clear_all:
     url: "http://192.168.xx.x/json/state"
     method: POST
     content_type: "application/json"
-    # "on":true and "fx":0 (Solid) undo whatever a previous idle-timeout
-    # run left behind — the Scan effect (see wled_start_scan) keeps
-    # repainting the strip every frame, so individual "i" pixel writes
-    # wouldn't visibly stick unless the effect is switched off first, and
-    # a 30-minute power-off (see wled_power_off) needs explicitly undoing.
-    payload: '{"on":true,"seg":[{"id":0,"fx":0,"i":[0,41,"000000"]},{"id":1,"fx":0,"i":[0,41,"000000"]},{"id":2,"fx":0,"i":[0,39,"000000"]},{"id":3,"fx":0,"i":[0,57,"000000"]}]}'
+    # "fx":0 (Solid) undoes whatever a previous idle-timeout run left
+    # behind — the Scan effect (see wled_start_scan) keeps repainting the
+    # strip every frame, so individual "i" pixel writes wouldn't visibly
+    # stick unless the effect is switched off first.
+    payload: '{"seg":[{"id":0,"fx":0,"i":[0,41,"000000"]},{"id":1,"fx":0,"i":[0,41,"000000"]},{"id":2,"fx":0,"i":[0,39,"000000"]},{"id":3,"fx":0,"i":[0,57,"000000"]}]}'
 
   wled_set_xy:
     url: "http://192.168.xx.xx/json/state"
@@ -52,12 +67,14 @@ rest_command:
     url: "http://192.168.xx.xx/json/state"
     method: POST
     content_type: "application/json"
+    # sx/ix (speed/tail size, 0-255) come from input_number helpers so
+    # they're tunable from the HA UI — see input_helpers.yaml.
     payload: >-
       {"on":true,"seg":[
-      {"id":0,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]},
-      {"id":1,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]},
-      {"id":2,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]},
-      {"id":3,"frz":false,"fx":10,"col":[[{{ r }},{{ g }},{{ b }}]]}
+      {"id":0,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":1,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":2,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":3,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]}
       ]}
 
   wled_power_off:

@@ -17,18 +17,30 @@
 # rest_commands.yaml), chasing the item → location → parent chain exactly
 # like the old browser-side code used to.
 #
-# Idle timeout: input_number.homebox_activity (input_helpers.yaml) is
-# bumped on every real webhook call, and two `state` triggers below watch
-# it with `for: 5 minutes` / `for: 30 minutes`. This was originally built
-# with wait_for_trigger listening for the same webhook event instead of a
-# separate helper — don't go back to that. It has a real, observed bug:
-# when a wait_for_trigger inside a running instance listens for the exact
-# same trigger as the automation's own top-level trigger, a new webhook
-# call can get silently absorbed by the pending wait (resolving it as a
-# normal completion) instead of restarting the automation, so the first
-# navigation after the scanner started did nothing and the second one was
-# needed to actually show the new highlight. Separate trigger sources
-# (webhook vs. state-on-a-counter) avoid that ambiguity entirely.
+# Idle timeout: input_number.homebox_activity_counter (input_helpers.yaml) is
+# bumped on every real webhook call. This was originally built with
+# wait_for_trigger listening for the same webhook event instead — don't
+# go back to that. It has a real, observed bug: when a wait_for_trigger
+# inside a running instance listens for the exact same trigger as the
+# automation's own top-level trigger, a new webhook call can get silently
+# absorbed by the pending wait (resolving it as a normal completion)
+# instead of restarting the automation, so the first navigation after the
+# scanner started did nothing and the second one was needed to actually
+# show the new highlight.
+#
+# It was then rebuilt using two `state` triggers with `for: 5 minutes` /
+# `for: 30 minutes` on that counter — also abandoned, because a trigger's
+# `for:` duration can't be templated in Home Assistant (as of this
+# writing it's still an open feature request, not just an oversight), so
+# the delays couldn't be made configurable that way. Instead, idle_check
+# below is a plain `time_pattern` trigger firing every minute, and the
+# action does its own elapsed-time comparison against
+# input_number.homebox_idle_scan_delay / homebox_idle_power_off_delay.
+# The input_boolean flags (reset alongside the activity counter on every
+# real webhook call) exist so each stage only fires once per idle period
+# — without them, the scan effect would restart its animation from
+# scratch every single minute once idle (fx being rewritten resets it),
+# and wled_power_off would get spammed every minute indefinitely.
 
 alias: "Homebox bin highlight"
 mode: restart
@@ -38,21 +50,14 @@ trigger:
     webhook_id: homebox-highlight
     allowed_methods: [POST]
     local_only: false
-  - id: idle_scan
-    platform: state
-    entity_id: input_number.homebox_activity
-    for:
-      minutes: 5
-  - id: idle_off
-    platform: state
-    entity_id: input_number.homebox_activity
-    for:
-      minutes: 30
+  - id: idle_check
+    platform: time_pattern
+    minutes: "/1"
 action:
   - variables:
       # input_select.homebox_highlight_color (see input_helpers.yaml)
       # picks a name here; add more entries to both to offer more colors.
-      # Computed unconditionally since both the webhook and idle_scan
+      # Computed unconditionally since both the webhook and idle_check
       # branches below need it.
       color_map:
         Red: "FF0000"
@@ -66,15 +71,20 @@ action:
       highlight_color: "{{ color_map.get(states('input_select.homebox_highlight_color'), 'FF0000') }}"
   - choose:
       # Real navigation/clear event: do the normal highlight logic, and
-      # bump the activity counter so the idle_scan/idle_off triggers'
-      # `for:` timers reset.
+      # bump the activity counter + reset the idle-stage flags so
+      # idle_check's elapsed-time comparison starts over from zero.
       - conditions:
           - condition: trigger
             id: webhook
         sequence:
           - service: input_number.increment
             target:
-              entity_id: input_number.homebox_activity
+              entity_id: input_number.homebox_activity_counter
+          - service: input_boolean.turn_off
+            target:
+              entity_id:
+                - input_boolean.homebox_scan_started_internal
+                - input_boolean.homebox_powered_off_internal
 
           - variables:
               req_type: "{{ trigger.get('json', {}).get('type', '') }}"
@@ -223,8 +233,17 @@ action:
                    else (led_offset + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 2)
                    else none }}
 
-          # Also powers WLED back on, in case a previous run put it to
-          # sleep or left the scanner running.
+          # Powers WLED back on as its own completed request first, in
+          # case a previous idle cycle put it to sleep — see the comment
+          # on wled_power_on in rest_commands.yaml for why this can't
+          # just be folded into wled_clear_all's payload. The delay is a
+          # second attempt at the same underlying problem: splitting the
+          # request alone wasn't enough, suggesting the LED output
+          # hardware itself needs a moment to settle after being
+          # re-enabled, not just a separate on/off API call.
+          - service: rest_command.wled_power_on
+          - delay:
+              milliseconds: 300
           - service: rest_command.wled_clear_all
           - if:
               - condition: template
@@ -237,27 +256,46 @@ action:
                   y_index: "{{ y_index }}"
                   color: "{{ highlight_color }}"
 
-      # 5 minutes with no webhook call at all: switch every segment to
-      # WLED's native "Scan" effect (fx 10 — Larson-scanner/Cylon-style
-      # bouncing dot) in the selected color.
+      # Checked every minute: how long since the last real webhook call,
+      # compared against the two configurable delays. scan_delay/off_delay
+      # default to 5/30 if the helpers are ever unavailable.
       - conditions:
           - condition: trigger
-            id: idle_scan
+            id: idle_check
         sequence:
           - variables:
-              scan_rgb: >-
-                {{ [highlight_color[0:2] | int(0, 16),
-                    highlight_color[2:4] | int(0, 16),
-                    highlight_color[4:6] | int(0, 16)] }}
-          - service: rest_command.wled_start_scan
-            data:
-              r: "{{ scan_rgb[0] }}"
-              g: "{{ scan_rgb[1] }}"
-              b: "{{ scan_rgb[2] }}"
-
-      # 30 minutes with no webhook call at all: power off entirely.
-      - conditions:
-          - condition: trigger
-            id: idle_off
-        sequence:
-          - service: rest_command.wled_power_off
+              idle_minutes: >-
+                {{ (now() - states.input_number.homebox_activity_counter.last_changed).total_seconds() / 60 }}
+              scan_delay: "{{ states('input_number.homebox_idle_scan_delay') | int(5) }}"
+              off_delay: "{{ states('input_number.homebox_idle_power_off_delay') | int(30) }}"
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ idle_minutes >= off_delay
+                     and not is_state('input_boolean.homebox_powered_off_internal', 'on') }}
+            then:
+              - service: rest_command.wled_power_off
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.homebox_powered_off_internal
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ idle_minutes >= scan_delay and idle_minutes < off_delay
+                     and not is_state('input_boolean.homebox_scan_started_internal', 'on') }}
+            then:
+              - variables:
+                  scan_rgb: >-
+                    {{ [highlight_color[0:2] | int(0, 16),
+                        highlight_color[2:4] | int(0, 16),
+                        highlight_color[4:6] | int(0, 16)] }}
+              - service: rest_command.wled_start_scan
+                data:
+                  r: "{{ scan_rgb[0] }}"
+                  g: "{{ scan_rgb[1] }}"
+                  b: "{{ scan_rgb[2] }}"
+                  sx: "{{ states('input_number.homebox_scan_effect_speed') | int(128) }}"
+                  ix: "{{ states('input_number.homebox_scan_effect_tail_size') | int(128) }}"
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.homebox_scan_started_internal

@@ -106,29 +106,46 @@ the two pieces independently instead of end-to-end:
 **The effects themselves**, without waiting at all — call these directly
 via **Developer Tools → Actions**:
 
-- `rest_command.wled_start_scan` with `r: 255, g: 0, b: 0` — every
-  segment should immediately switch to a bouncing-dot scan in red.
+- `rest_command.wled_start_scan` with `r: 255, g: 0, b: 0, sx: 128, ix: 128`
+  — every segment should immediately switch to a bouncing-dot scan in
+  red. Try low/high `sx`/`ix` values to confirm they actually change the
+  speed/tail size, not just accepted-but-ignored.
 - `rest_command.wled_power_off` with no data — the whole device should
   go dark and unresponsive to `wled_set_xy` until powered back on.
-- `rest_command.wled_clear_all` with no data — should both power the
-  device back on and stop any running scan (`fx` reset to Solid/0).
+- `rest_command.wled_power_on` with no data, **by itself** — device comes
+  back on. Then, in a *separate* call, `rest_command.wled_clear_all` —
+  should stop any running scan (`fx` reset to Solid/0). These two are
+  deliberately kept as separate requests, and the real automation also
+  waits ~300ms between them (see the comment on `wled_power_on` in
+  `rest_commands.yaml` and the `delay` step in `automation.yaml`) — the
+  LED output hardware needs a moment to settle after being re-enabled
+  before it reliably renders new pixel data.
 
-**The timeout logic itself**: temporarily lower the two `for:` durations
-in `automation.yaml`'s `idle_scan`/`idle_off` triggers (e.g. `seconds: 20`
-/ `seconds: 40` instead of `minutes: 5` / `minutes: 30`), fire a real
-webhook payload (per test 2), and watch **Developer Tools → States** for
-`input_number.homebox_activity` — it should bump by 1 immediately, then
-(after your shortened duration) a *new* automation trace should appear
-triggered by `idle_scan`, and later one triggered by `idle_off`. Revert
-the durations afterward.
+**The timeout logic itself**: set `input_number.homebox_idle_scan_delay`
+and `homebox_idle_power_off_delay` (Developer Tools → States, or the
+Settings → Devices & Services → Helpers UI) to something small, like `1`
+and `2`. Fire a real webhook payload (per test 2) and watch **Developer
+Tools → States**:
+
+- `input_number.homebox_activity_counter` should bump by 1 immediately, and
+  `input_boolean.homebox_scan_started_internal` / `homebox_powered_off_internal` should
+  both go `off`.
+- Once a minute, a new automation trace appears triggered by
+  `idle_check` — it's a no-op until enough idle minutes have passed.
+- After your shortened scan delay, `homebox_scan_started_internal` flips `on` and
+  the scan effect starts; it should **not** restart/stutter on
+  subsequent `idle_check` ticks.
+- After your shortened off delay, `homebox_powered_off_internal` flips `on` and
+  the device powers off.
+
+Revert both delay values back to their normal minutes afterward.
 
 **Confirming a real navigation actually interrupts a running scan**: while
-the scanner is active (or during a shortened test wait), send another
-real webhook call and check that the LEDs immediately show the new
-highlight — not a scan that keeps running until some later action. If
-this doesn't work on the first call and needs a second one to take
-effect, that's the exact `wait_for_trigger`-on-the-same-event bug
-documented in the README's Gotchas section — the fix was moving off
-`wait_for_trigger` entirely in favor of the `input_number` counter +
-separate `state` triggers, so this shouldn't reappear, but it's the thing
-to watch for if the idle logic is ever changed again.
+the scanner is active, send another real webhook call and check that the
+LEDs immediately show the new highlight — not a scan that keeps running
+until some later action. If this doesn't work on the first call and needs
+a second one to take effect, that's the exact `wait_for_trigger`-on-the-
+same-event bug documented in the README's Gotchas section — the current
+design (activity counter + `time_pattern` trigger) doesn't listen for the
+webhook a second time anywhere, so this shouldn't reappear, but it's the
+thing to watch for if the idle logic is ever changed again.

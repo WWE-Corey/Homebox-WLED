@@ -5,10 +5,30 @@
 # must exactly match the keys of `color_map` in automation.yaml — add an
 # entry to both to offer another color.
 #
-# homebox_activity is bumped by 1 on every real webhook call (see
-# automation.yaml) purely so its `idle_scan`/`idle_off` triggers have a
-# state change to measure "5/30 minutes since" from — the number itself
-# is meaningless, it's just a reliable, always-distinct value to watch.
+# homebox_activity_counter is bumped by 1 on every real webhook call (see
+# automation.yaml) — its idle_check trigger fires every minute and
+# measures elapsed time against this counter's last_changed timestamp.
+# The number itself is meaningless, it's just a reliable, always-distinct
+# value to watch.
+#
+# homebox_idle_scan_delay / homebox_idle_power_off_delay set how long the
+# strip has to sit idle before, respectively, the scan effect starts and
+# the device powers off. off_delay should stay greater than scan_delay —
+# if it isn't, the scanner is simply skipped and it goes straight to off.
+#
+# homebox_scan_effect_speed / homebox_scan_effect_tail_size tune the idle Scan effect's
+# speed and tail size (WLED's sx/ix segment params, 0-255) — see
+# wled_start_scan in rest_commands.yaml.
+#
+# homebox_scan_started_internal / homebox_powered_off_internal are internal bookkeeping,
+# not meant to be touched from the UI — automation.yaml resets them on
+# every real webhook call so each idle stage fires exactly once per idle
+# period instead of repeating every minute.
+#
+# All of these persist their value across Home Assistant restarts
+# automatically (input_number/input_select/input_boolean all implement
+# RestoreEntity) — `initial:` only applies the very first time a helper
+# is created.
 
 input_select:
   homebox_highlight_color:
@@ -26,10 +46,55 @@ input_select:
     initial: Red
 
 input_number:
-  homebox_activity:
+  homebox_activity_counter:
     name: Homebox Activity Counter
     icon: mdi:counter
     min: 0
     max: 999999999
     step: 1
     mode: box
+
+  homebox_idle_scan_delay:
+    name: Homebox Idle Scan Delay (minutes)
+    icon: mdi:timer-outline
+    min: 1
+    max: 120
+    step: 1
+    initial: 5
+    mode: box
+
+  homebox_idle_power_off_delay:
+    name: Homebox Idle Power-Off Delay (minutes)
+    icon: mdi:timer-off-outline
+    min: 1
+    max: 240
+    step: 1
+    initial: 30
+    mode: box
+
+  homebox_scan_effect_speed:
+    name: Homebox Scan Effect Speed
+    icon: mdi:speedometer
+    min: 0
+    max: 255
+    step: 1
+    initial: 128
+    mode: slider
+
+  homebox_scan_effect_tail_size:
+    name: Homebox Scan Effect Tail Size
+    icon: mdi:motion-outline
+    min: 0
+    max: 255
+    step: 1
+    initial: 128
+    mode: slider
+
+input_boolean:
+  homebox_scan_started_internal:
+    name: Homebox Scan Started (internal)
+    icon: mdi:sync
+
+  homebox_powered_off_internal:
+    name: Homebox Powered Off (internal)
+    icon: mdi:power-off
