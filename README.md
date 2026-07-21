@@ -705,8 +705,9 @@ See `bus-config.json` for the full applied configuration, and
 
 1. **WLED**: run `apply-bus-config.sh` to push the 3-bus config
    (`bus-config.json`) and reboot, then run `create-segments.sh`
-   to create the 3 segments. Confirm with `GET /json/info` — `seglc`
-   should show 3 entries.
+   to create the 18 per-unit segments (see Unit → WLED segment
+   assignment above). Confirm with `GET /json/info` — `seglc` should
+   show 18 entries.
 2. **Home Assistant**: add the `rest_command`s (`rest_commands.yaml`) and
    `shell_command` (`shell_commands.yaml` — only needed once the
    Location Display is in play), the `input_select`/`input_number`
@@ -739,18 +740,17 @@ These are all about the LED/WLED side specifically — see the [Location
 Display](#location-display-esp32--tft) section's own Open Items for
 that side's list.
 
-- [ ] Confirm physical LED order matches the assumed wiring (Y
+- [x] ~~Confirm physical LED order matches the assumed wiring (Y
       bottom-to-top through the bottom unit then the top unit, then X
-      left-to-right across the top) once LEDs are physically installed —
-      see the coordinate formula assumptions above.
-- [ ] Confirm the column-layout lookup tables (`normal_col_map` /
+      left-to-right across the top) once LEDs are physically installed~~
+      — confirmed against real, physically installed LEDs: wiring matches
+      the assumed order exactly, no offset/direction fix needed.
+- [x] ~~Confirm the column-layout lookup tables (`normal_col_map` /
       `merged_col_map` / `bottom_col_map` / `top_row_mode`) match reality
-      for every column — they're built from two reference images (one per
-      bottom-unit layout, one per each of the 3 top-unit layouts) rather
-      than exhaustively checked against all 9 columns' actual Homebox
-      codes. A location using a code the map doesn't expect (e.g. a `07`
-      on a wide-bin row that should only go up to `04`) will silently
-      fail validation rather than highlight the wrong LED.
+      for every column~~ — confirmed against every column's actual
+      Homebox codes, not just the two reference images the maps were
+      originally built from: all 9 columns validate and highlight
+      correctly, no unexpected codes or map corrections needed.
 - [x] ~~Confirm all 64+ Homebox drawer locations follow the strict
       `LETTER-NN` naming convention~~ — they don't; real names are
       descriptive (`"C-04 M8 Hex Head Cap Screws"`, `"A2 Metric"`). Fixed
