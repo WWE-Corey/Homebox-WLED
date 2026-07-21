@@ -1,0 +1,208 @@
+# Add via Settings → Automations & Scenes → Create Automation → Edit in
+# YAML, or paste directly into automations.yaml.
+#
+# Two triggers:
+#   - location_viewed: fires on the homebox_location_viewed event that
+#     automation.yaml fires on every real navigation (see the comment
+#     there for why this is an event and not a second webhook).
+#     Deliberately does its own Homebox lookups rather than sharing
+#     automation.yaml's resolved variables — separate automation runs
+#     don't share variable state, and this one only needs item
+#     name/quantity/image, none of the WLED coordinate math.
+#   - display_idle_check: a time_pattern trigger, checked every minute,
+#     that auto-clears the display if it's been showing the same
+#     item/location for longer than input_number.homebox_display_
+#     timeout_minutes without an acknowledge — see the input_helpers.yaml
+#     comment for why input_number.homebox_activity_counter (also used by
+#     automation.yaml's own idle_check) is the right signal to measure
+#     against here too: it's bumped on every real navigation AND on every
+#     acknowledge (see display_ack_automation.yaml), so "time since it
+#     last changed" is exactly "time since this display's content was
+#     last fresh or acknowledged". Set homebox_display_timeout_minutes to
+#     0 to disable this entirely.
+
+alias: "Homebox display update"
+mode: restart
+trigger:
+  - id: location_viewed
+    platform: event
+    event_type: homebox_location_viewed
+  - id: display_idle_check
+    platform: time_pattern
+    minutes: "/1"
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: location_viewed
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.homebox_display_timed_out_internal
+
+          - variables:
+              req_type: "{{ trigger.event.data.type }}"
+              req_id: "{{ trigger.event.data.id }}"
+              item_resp: { content: {} }
+              location_resp: { content: {} }
+
+          - if:
+              - condition: template
+                value_template: "{{ req_type | length == 0 or req_id | length == 0 }}"
+            then:
+              - service: rest_command.esp32_display_clear
+              - stop: "No location/item — display cleared."
+
+          - if:
+              - condition: template
+                value_template: "{{ req_type == 'item' }}"
+            then:
+              - service: rest_command.homebox_get_entity
+                data:
+                  entity_id: "{{ req_id }}"
+                response_variable: item_resp
+                continue_on_error: true
+            else:
+              - service: rest_command.homebox_get_entity
+                data:
+                  entity_id: "{{ req_id }}"
+                response_variable: location_resp
+                continue_on_error: true
+
+          # Item view: the item's own parent is its containing location.
+          # Location view: no item selected, location_resp is already the location.
+          - if:
+              - condition: template
+                value_template: "{{ req_type == 'item' }}"
+            then:
+              - variables:
+                  item_id: "{{ item_resp.content.id | default('') }}"
+                  item_name: "{{ item_resp.content.name | default('') }}"
+                  quantity: "{{ item_resp.content.quantity | default(0) }}"
+                  # Homebox computes this server-side as the item's PRIMARY photo
+                  # attachment id (the attachment marked primary + type=photo) —
+                  # confirmed against the backend source
+                  # (repo_entities.go's mapEntitySummary): far more reliable than
+                  # digging through `attachments[]` ourselves, which this used to
+                  # do. Two real bugs in that old approach, both confirmed
+                  # against the backend: (1) a single-entity GET (what
+                  # homebox_get_entity calls) never eager-loads each attachment's
+                  # own thumbnail edge, so `attachments[N].thumbnail` is ALWAYS
+                  # absent no matter which attachment N is — getOneTx calls
+                  # .WithAttachments() with no nested .WithThumbnail(), unlike a
+                  # different code path elsewhere in the backend that does; (2)
+                  # `attachments[0]` isn't even guaranteed to BE the photo — it's
+                  # just whatever attachment Homebox returns first, which could
+                  # be a receipt or warranty doc. `imageId` sidesteps both: it's
+                  # already resolved server-side to specifically the primary
+                  # photo, with none of this ambiguity.
+                  image_attachment_id: "{{ item_resp.content.get('imageId') | default('') }}"
+                  # `location` (not `parent`) is the item's nearest location-type
+                  # ancestor as resolved server-side by Homebox — for an item
+                  # nested inside another item rather than directly inside a
+                  # location, `parent` would stop one level too early at the
+                  # containing item. Falls back to `parent` defensively in case
+                  # `location` is ever absent. .get()-based, not dot-notation —
+                  # Homebox's backend uses omitempty, so these keys are dropped
+                  # from the JSON entirely when null rather than sent as null;
+                  # dot-notation on a genuinely-missing key raises a hard error
+                  # in HA's sandboxed Jinja instead of falling through to
+                  # Undefined. Same fix as automation.yaml's location_id
+                  # resolution — see its comment for the full explanation.
+                  location_name: >-
+                    {{ (item_resp.content.get('location') or {}).get('name')
+                       or (item_resp.content.get('parent') or {}).get('name')
+                       or '' }}
+                  location_id: >-
+                    {{ (item_resp.content.get('location') or {}).get('id')
+                       or (item_resp.content.get('parent') or {}).get('id')
+                       or '' }}
+            else:
+              - variables:
+                  item_id: ""
+                  item_name: ""
+                  quantity: 0
+                  image_attachment_id: ""
+                  location_name: "{{ location_resp.content.name | default('') }}"
+                  location_id: "{{ location_resp.content.id | default('') }}"
+
+          # The unit prefix (e.g. "A1") comes from the LOCATION's own parent —
+          # but the item response's nested `location` field above is only a
+          # summary (id/name), and Homebox doesn't eager-load THAT location's
+          # own parent when it's nested this way (confirmed against the backend
+          # source — same class of eager-loading gap as the imageId one above,
+          # not the same bug but the same root cause: single-entity GET only
+          # eager-loads one level of relations, not two). Fetching the location
+          # by its OWN id gets a full record whose `parent` IS populated — the
+          # entity being fetched DIRECTLY always gets its own parent eager-loaded
+          # (getOneTx's .WithParent(...)). Skipped for location view, where
+          # location_resp already IS that full record (fetched directly above,
+          # not nested under an item) — see automation.yaml's location_resp/
+          # parent_name resolution for the exact same pattern on the WLED side.
+          - variables:
+              location_detail_resp: { content: {} }
+          - if:
+              - condition: template
+                value_template: "{{ req_type == 'item' and location_id | length > 0 }}"
+            then:
+              - service: rest_command.homebox_get_entity
+                data:
+                  entity_id: "{{ location_id }}"
+                response_variable: location_detail_resp
+                continue_on_error: true
+
+          - variables:
+              unit_parent_name: >-
+                {{ (location_detail_resp.content.get('parent') or {}).get('name', '')
+                   if req_type == 'item'
+                   else (location_resp.content.get('parent') or {}).get('name', '') }}
+              # Same "CODE description..." convention as automation.yaml's own
+              # unit_letter/unit_number parsing — only the leading 2 characters
+              # (e.g. "A1" from "A1 Metric") matter.
+              unit_prefix: "{{ (unit_parent_name | upper | trim)[:2] }}"
+              location_code: >-
+                {{ (unit_prefix + ' ' + (location_name | upper | trim)[:4])
+                   if unit_prefix | length > 0
+                   else (location_name | upper | trim)[:4] }}
+              attachment_id: "{{ image_attachment_id }}"
+
+          - service: rest_command.esp32_display_set_text
+            data:
+              location: "{{ location_code }}"
+              item_name: "{{ item_name }}"
+              item_id: "{{ item_id }}"
+              quantity: "{{ quantity }}"
+
+          - if:
+              - condition: template
+                value_template: "{{ attachment_id | length > 0 and item_id | length > 0 }}"
+            then:
+              - service: shell_command.push_display_image
+                data:
+                  item_id: "{{ item_id }}"
+                  attachment_id: "{{ attachment_id }}"
+
+      # Checked every minute: how long since the display last had fresh
+      # content or an acknowledge, compared against the configurable
+      # timeout. homebox_display_timed_out_internal ensures this only
+      # fires once per idle period, same pattern as automation.yaml's own
+      # breathe/power-off flags.
+      - conditions:
+          - condition: trigger
+            id: display_idle_check
+        sequence:
+          - variables:
+              display_idle_minutes: >-
+                {{ (now() - states.input_number.homebox_activity_counter.last_changed).total_seconds() / 60 }}
+              display_timeout_minutes: "{{ states('input_number.homebox_display_timeout_minutes') | int(0) }}"
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ display_timeout_minutes > 0
+                     and display_idle_minutes >= display_timeout_minutes
+                     and not is_state('input_boolean.homebox_display_timed_out_internal', 'on') }}
+            then:
+              - service: rest_command.esp32_display_clear
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.homebox_display_timed_out_internal

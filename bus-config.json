@@ -3,10 +3,9 @@
     "led": {
       "total": 178,
       "ins": [
-        { "start": 0,   "len": 41, "pin": [16], "order": 0, "rev": false, "type": 22 },
-        { "start": 41,  "len": 41, "pin": [12], "order": 0, "rev": false, "type": 22 },
-        { "start": 82,  "len": 39, "pin": [4],  "order": 0, "rev": false, "type": 22 },
-        { "start": 121, "len": 57, "pin": [2],  "order": 0, "rev": false, "type": 22 }
+        { "start": 0,   "len": 62, "pin": [16], "order": 0, "rev": false, "type": 22 },
+        { "start": 62,  "len": 40, "pin": [12], "order": 0, "rev": false, "type": 22 },
+        { "start": 102, "len": 76, "pin": [4],  "order": 0, "rev": false, "type": 22 }
       ]
     }
   }

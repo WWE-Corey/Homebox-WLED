@@ -3,6 +3,30 @@
 # After editing, reload via Developer Tools → YAML → RELOAD REST COMMAND
 # ENTITIES — no full HA restart needed.
 #
+# IMPORTANT if you use `rest_command: !include rest_commands.yaml` in
+# configuration.yaml (rather than pasting this block's contents directly
+# into configuration.yaml itself): the top-level `rest_command:` key
+# below must come OUT of the file first. The !include line already
+# supplies that wrapper — leaving it in here double-nests everything
+# (rest_command -> rest_command -> wled_power_on -> ...) and HA reports
+# EVERY command as invalid, including ones that were never touched, plus
+# two confusing "required key 'url' not provided" errors for the
+# redundant wrapper key itself. Confirmed as a real, exact failure mode,
+# not a hypothetical.
+#
+# This file holds every rest_command this project defines — WLED
+# highlighting AND the ESP32 display — deliberately NOT split across two
+# files. rest_command is a dict-type HA config domain (one flat mapping
+# of names to configs), and most HA setups only point that single domain
+# key at one !include target (this file, if you're using the pattern
+# above) — splitting WLED and display commands into two separate files
+# would mean one of them silently never loads unless you switch to
+# `packages:`. (automation.yaml/display_automation.yaml don't have this
+# problem and ARE kept as separate files — `automation:` is a list-type
+# domain, so HA merges automations from multiple sources without any
+# collision risk. shell_command has the identical
+# one-file-per-dict-domain consideration — see shell_commands.yaml.)
+#
 # homebox_get_entity is what replaced the browser-side Homebox API calls.
 # It needs a Homebox API token — generate one from a Homebox account and
 # store it in secrets.yaml as a full header value (never in the
@@ -33,48 +57,119 @@ rest_command:
     payload: '{"on":true}'
 
   wled_clear_all:
-    url: "http://192.168.xx.x/json/state"
+    url: "http://192.168.xx.xx/json/state"
     method: POST
     content_type: "application/json"
     # "fx":0 (Solid) undoes whatever a previous idle-timeout run left
-    # behind — the Scan effect (see wled_start_scan) keeps repainting the
-    # strip every frame, so individual "i" pixel writes wouldn't visibly
-    # stick unless the effect is switched off first.
-    payload: '{"seg":[{"id":0,"fx":0,"i":[0,41,"000000"]},{"id":1,"fx":0,"i":[0,41,"000000"]},{"id":2,"fx":0,"i":[0,39,"000000"]},{"id":3,"fx":0,"i":[0,57,"000000"]}]}'
+    # behind — the Breathe effect (see wled_start_breathe) keeps
+    # repainting the strip every frame, so individual "i" pixel writes
+    # wouldn't visibly stick unless the effect is switched off first.
+    #
+    # 18 segments, not 3 — one Y-axis segment (IDs 0-8) and one X-axis
+    # segment (IDs 9-17) PER UNIT (A-I), not one segment per physical
+    # bus. See create-segments.sh for why this had to become per-unit
+    # rather than per-bus, and README's LED addressing model for the
+    # full breakdown. bus-config.json (the physical GPIO wiring) is
+    # unchanged — this is purely a finer logical carving of the same
+    # 178 LEDs.
+    #
+    # CONFIRMED WLED FIRMWARE QUIRK (16.0.1), not a hypothetical: each
+    # segment's "i" array below lists every single index explicitly
+    # ([0,"000000",1,"000000",...]) rather than the compact 3-element
+    # range-fill shorthand ([0,len-1,"000000"]) used everywhere else in
+    # this project. The range-fill form does NOT reliably clear a pixel
+    # that was just individually set by wled_set_xy on that same
+    # segment — the segment reports "cleared" (fx:0, frz:true) but the
+    # specific LED wled_set_xy last touched stays lit. Reproduced twice
+    # live (real webhook navigations, not just synthetic calls) and
+    # fixed both times by switching that segment to explicit per-index
+    # pairs instead. Only reproduced on these small per-unit segments —
+    # the old shared per-bus segments never showed it — so it may be
+    # specific to segment size or to a pixel that was very recently
+    # individually addressed; not root-caused further than that.
+    payload: >-
+      {"seg":[
+      {"id":0,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000",11,"000000",12,"000000"]},
+      {"id":1,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000",11,"000000"]},
+      {"id":2,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000",11,"000000",12,"000000"]},
+      {"id":3,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000",11,"000000"]},
+      {"id":4,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000",11,"000000"]},
+      {"id":5,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000"]},
+      {"id":6,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000"]},
+      {"id":7,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000"]},
+      {"id":8,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000",8,"000000",9,"000000",10,"000000"]},
+      {"id":9,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":10,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":11,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":12,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":13,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":14,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":15,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":16,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":17,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]}
+      ]}
 
   wled_set_xy:
     url: "http://192.168.xx.xx/json/state"
     method: POST
     content_type: "application/json"
-    # x_indices is a list of 1 or 2 LEDs (wide/merged bins light both) —
-    # the loop below emits an "index,color" pair per entry before the Y pair.
-    payload: '{"seg":[{"id":{{ seg_id }},"i":[{% for x in x_indices %}{{ x }},"{{ color }}",{% endfor %}{{ y_index }},"{{ color }}"]}]}'
+    # Two segments now, not one — a unit's Y-axis and X-axis LEDs are
+    # separate dedicated segments (see create-segments.sh), so
+    # highlighting a unit means writing to both: y_seg_id gets the single
+    # row pixel, x_seg_id gets the 1-2 column pixels (wide/merged bins
+    # light both). Each "i" array builds its own comma-separation via
+    # loop.first rather than relying on a guaranteed-last element (the
+    # old single-segment version could lean on y_index always being
+    # last; with two independent segments neither list has that luxury).
+    payload: >-
+      {"seg":[
+      {"id":{{ y_seg_id }},"i":[{{ y_index }},"{{ color }}"]},
+      {"id":{{ x_seg_id }},"i":[{% for x in x_indices %}{% if not loop.first %},{% endif %}{{ x }},"{{ color }}"{% endfor %}]}
+      ]}
 
-  # fx 10 = WLED's built-in "Scan" effect (a single dot bouncing back and
-  # forth — Larson scanner / Cylon / KITT style), applied to all 4
-  # segments at once so the whole install animates, not just one column.
-  # "col" wants an RGB int triplet, not a hex string (unlike the "i"
-  # array above), hence the r/g/b split in automation.yaml.
+  # fx 2 = WLED's built-in "Breathe" effect, applied to EVERY segment
+  # (all 18 — both the Y-axis IDs 0-8 and the X-axis IDs 9-17) as one
+  # uniform group. Scan (fx 10) previously ran on the X-axis segments
+  # separately from Breathe on the Y-axis, but was dropped in favor of
+  # a single uniform Breathe group — see the README's idle-behavior
+  # section. homebox_breathe_effect_speed is the only speed knob needed
+  # now that every segment runs the same effect. "col" wants an RGB int
+  # triplet, not a hex string (unlike the "i" array above), hence the
+  # r/g/b split in automation.yaml.
   #
   # "frz":false is required — setting individual pixels via "i" (as
   # wled_clear_all/wled_set_xy do) implicitly freezes the segment, which
   # holds that static frame and stops the effect engine from rendering
-  # at all. Without explicitly unfreezing here, fx/col/sx/ix all get set
-  # correctly (WLED's own UI shows "Scan" selected) but nothing visibly
-  # animates, since the frozen static frame just keeps being displayed
-  # instead.
-  wled_start_scan:
+  # at all. Without explicitly unfreezing here, fx/col/sx all get set
+  # correctly (WLED's own UI shows "Breathe" selected) but nothing
+  # visibly animates, since the frozen static frame just keeps being
+  # displayed instead.
+  wled_start_breathe:
     url: "http://192.168.xx.xx/json/state"
     method: POST
     content_type: "application/json"
-    # sx/ix (speed/tail size, 0-255) come from input_number helpers so
-    # they're tunable from the HA UI — see input_helpers.yaml.
+    # sx (speed, 0-255) comes from an input_number helper so it's
+    # tunable from the HA UI — see input_helpers.yaml.
     payload: >-
       {"on":true,"seg":[
-      {"id":0,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]},
-      {"id":1,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]},
-      {"id":2,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]},
-      {"id":3,"frz":false,"fx":10,"sx":{{ sx }},"ix":{{ ix }},"col":[[{{ r }},{{ g }},{{ b }}]]}
+      {"id":0,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":1,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":2,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":3,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":4,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":5,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":6,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":7,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":8,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":9,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":10,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":11,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":12,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":13,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":14,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":15,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":16,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":17,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]}
       ]}
 
   wled_power_off:
@@ -83,8 +178,78 @@ rest_command:
     content_type: "application/json"
     payload: '{"on":false}'
 
+  # Deliberately hits Homebox's backend directly via its LAN address —
+  # 7745, not the public homebox.url domain. HA is on the same LAN as
+  # Homebox and has no need to round-trip through HAProxy/the nginx tap
+  # at all, but if it did (i.e. if this used homebox.url like every other
+  # Homebox call in this project), every lookup this rest_command makes
+  # would itself be a GET /api/v1/entities/{id} request passing through
+  # the tap — which mirrors exactly that pattern back to this same
+  # webhook. That's a genuine, observed self-triggering feedback loop:
+  # webhook fires -> automation calls homebox_get_entity -> tap mirrors
+  # it -> webhook fires again -> ad infinitum, and since automation.yaml
+  # is mode: restart, every new trigger kills the previous run before it
+  # ever reaches the WLED steps at the end, so nothing visibly happens
+  # despite the automation firing continuously. Keep this one URL
+  # LAN-direct; see homebox-tap-nginx.conf and automation.yaml for the
+  # rest of this story.
   homebox_get_entity:
-    url: "https://homebox.url/api/v1/entities/{{ entity_id }}"
+    url: "http://192.168.xx.xx:7745/api/v1/entities/{{ entity_id }}"
     method: GET
     headers:
       Authorization: !secret homebox_auth_header
+
+  # ---- Location Display (ESP32 + NV3007) ----
+  # esp32_display_set_text / esp32_display_clear / esp32_display_backlight_*
+  # talk to the display's own small HTTP server — same "device runs a
+  # simple JSON API, HA drives it via rest_command" pattern as WLED
+  # above. Replace the placeholder IP with the display's actual address.
+  esp32_display_set_text:
+    url: "http://192.168.xx.xx/text"
+    method: POST
+    content_type: "application/json"
+    # tojson (not manual quoting) so item names with quotes/backslashes
+    # in them — real Homebox data, not hypothetical — don't break the
+    # JSON body.
+    payload: >-
+      {"location":{{ location | tojson }},
+      "item_name":{{ item_name | tojson }},
+      "item_id":{{ item_id | tojson }},
+      "quantity":{{ quantity }}}
+
+  esp32_display_clear:
+    url: "http://192.168.xx.xx/clear"
+    method: POST
+    content_type: "application/json"
+    payload: ""
+
+  # Backlight on/off — separate from esp32_display_clear on purpose:
+  # this only toggles the backlight GPIO (see TFT_BL/handleSetBacklight()
+  # in homebox_display.ino), it doesn't touch what's actually on screen.
+  # Requires BL physically rewired from 3.3V (its default wiring) to a
+  # GPIO — see TFT_BL's comment in the firmware.
+  esp32_display_backlight_on:
+    url: "http://192.168.xx.xx/backlight"
+    method: POST
+    content_type: "application/json"
+    payload: '{"on":true}'
+
+  esp32_display_backlight_off:
+    url: "http://192.168.xx.xx/backlight"
+    method: POST
+    content_type: "application/json"
+    payload: '{"on":false}'
+
+  # Write counterpart to homebox_get_entity above — same host, same
+  # auth, same shape of call, just PATCH instead of GET. Confirmed
+  # against Homebox's actual backend source
+  # (backend/internal/data/repo/repo_entities.go): PATCH
+  # /api/v1/entities/{id} accepts a partial-update body, so sending only
+  # {"quantity": ...} is enough — nothing else needs to be included.
+  homebox_patch_quantity:
+    url: "https://homebox.url/api/v1/entities/{{ entity_id }}"
+    method: PATCH
+    content_type: "application/json"
+    headers:
+      Authorization: !secret homebox_auth_header
+    payload: '{"quantity":{{ quantity }}}'

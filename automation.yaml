@@ -11,11 +11,26 @@
 # round-trip through a public hostname, and local_only: true will silently
 # drop them with no error logged.
 #
-# The userscript sends only a raw {type, id} pulled from the Homebox URL —
-# no Homebox credentials. This automation resolves that id to a unit +
-# drawer code itself, via rest_command.homebox_get_entity (see
-# rest_commands.yaml), chasing the item → location → parent chain exactly
-# like the old browser-side code used to.
+# Fires from the nginx mirror-tap (see homebox-tap-nginx.conf) — nginx
+# mirrors real GET /api/v1/entities/{id} traffic from Homebox's own
+# frontend to this webhook as ?id=<uuid>, no Homebox credentials
+# involved (the tap never touches the request/response body, just
+# watches the URL). Homebox v0.26+ merged items and locations into that
+# one endpoint (repo.EntityOut) — there's no separate /items/ or
+# /locations/ route, and no type in the URL, so this automation fetches
+# the entity itself (rest_command.homebox_get_entity, see
+# rest_commands.yaml) and reads its own entityType.isLocation to find
+# out which kind it is, then chases the item → location → parent chain
+# from there.
+#
+# allowed_methods includes GET because that's what the nginx tap sends
+# (HA disables GET/HEAD webhooks by default). POST+json is also still
+# accepted — that's the old Tampermonkey userscript's shape and
+# testing.md's manual curl bypass; both are harmless to keep supported
+# alongside the new GET+query shape (see the req_id extraction below —
+# note only `id` is read from the trigger; any `type` a caller sends is
+# ignored and re-derived from Homebox's own data instead, since the
+# nginx tap can no longer supply one).
 #
 # Idle timeout: input_number.homebox_activity_counter (input_helpers.yaml) is
 # bumped on every real webhook call. This was originally built with
@@ -35,10 +50,10 @@
 # the delays couldn't be made configurable that way. Instead, idle_check
 # below is a plain `time_pattern` trigger firing every minute, and the
 # action does its own elapsed-time comparison against
-# input_number.homebox_idle_scan_delay / homebox_idle_power_off_delay.
+# input_number.homebox_idle_breathe_delay / homebox_idle_power_off_delay.
 # The input_boolean flags (reset alongside the activity counter on every
 # real webhook call) exist so each stage only fires once per idle period
-# — without them, the scan effect would restart its animation from
+# — without them, the breathe effect would restart its animation from
 # scratch every single minute once idle (fx being rewritten resets it),
 # and wled_power_off would get spammed every minute indefinitely.
 
@@ -48,7 +63,7 @@ trigger:
   - id: webhook
     platform: webhook
     webhook_id: homebox-highlight
-    allowed_methods: [POST]
+    allowed_methods: [POST, GET]
     local_only: false
   - id: idle_check
     platform: time_pattern
@@ -83,31 +98,85 @@ action:
           - service: input_boolean.turn_off
             target:
               entity_id:
-                - input_boolean.homebox_scan_started_internal
+                - input_boolean.homebox_breathe_started_internal
                 - input_boolean.homebox_powered_off_internal
 
           - variables:
-              req_type: "{{ trigger.get('json', {}).get('type', '') }}"
-              req_id: "{{ trigger.get('json', {}).get('id', '') }}"
-              item_resp: { content: {} }
+              # Only `id` is read from the trigger now — see the
+              # entity_resp/is_location block below for why `type` isn't
+              # read from the trigger at all anymore. json (POST, old
+              # userscript/manual curl) is checked first, query (GET,
+              # nginx mirror-tap) second. default('', true) collapses
+              # both a missing key (None) and Undefined down to '' so
+              # req_id is always a real string — every `| length` check
+              # further down would otherwise error on None.
+              req_id: >-
+                {{ (trigger.get('json', {}).get('id')
+                    or trigger.get('query', {}).get('id')) | default('', true) }}
+
+          - variables:
+              entity_resp: { content: {} }
               location_resp: { content: {} }
               parent_resp: { content: {} }
 
-          # If we were handed an item page, hop from item → its parent location.
+          # Always fetch the viewed entity itself. Homebox v0.26+ merged
+          # items and locations into one /api/v1/entities/{id} endpoint
+          # (repo.EntityOut) — the URL alone no longer says which one
+          # this is (that's also why the nginx tap can no longer send a
+          # `type` query param; see homebox-tap-nginx.conf), so it has to
+          # be read out of the fetched entity's own entityType.isLocation
+          # field instead.
           - if:
               - condition: template
-                value_template: "{{ req_type == 'item' and req_id | length > 0 }}"
+                value_template: "{{ req_id | length > 0 }}"
             then:
               - service: rest_command.homebox_get_entity
                 data:
                   entity_id: "{{ req_id }}"
-                response_variable: item_resp
+                response_variable: entity_resp
                 continue_on_error: true
 
           - variables:
+              # .get()-based, not dot-notation: Homebox's backend uses Go
+              # struct tags with omitempty, so entityType/location/parent
+              # are DROPPED from the JSON entirely when null (not sent as
+              # an explicit `null`) — e.g. a top-level entity with no
+              # parent. Dot-notation on a genuinely-missing dict key
+              # raises a hard UndefinedError in HA's sandboxed Jinja
+              # rather than gracefully falling through to Undefined the
+              # way `| default(...)` alone would suggest — this was a
+              # real observed crash ("'dict object' has no attribute
+              # 'location'"), not a hypothetical. `.get('key') or {}`
+              # sidesteps it entirely regardless of the exact Jinja
+              # fallback mechanics.
+              is_location: "{{ (entity_resp.content.get('entityType') or {}).get('isLocation', false) }}"
+              req_type: "{{ 'location' if is_location else ('item' if req_id | length > 0 else '') }}"
+
+          # Lets display_automation.yaml react to the same navigation
+          # without a second automation trying to register the same
+          # webhook_id (HA webhook triggers are 1:1 with a URL — two
+          # automations can't both claim "homebox-highlight"). Firing an
+          # event instead is the standard HA way to fan one external
+          # trigger out to multiple automations.
+          - event: homebox_location_viewed
+            event_data:
+              type: "{{ req_type }}"
+              id: "{{ req_id }}"
+
+          - variables:
+              # `location` (not `parent`) is the entity's nearest
+              # location-type ancestor as resolved server-side — for an
+              # item nested inside another item (not directly inside a
+              # location), `parent` would stop one level too early at
+              # the containing item, while `location` walks all the way
+              # up. Falls back to `parent.id` defensively in case
+              # `location` is ever absent. .get()-based for the same
+              # omitempty reason as is_location above.
               location_id: >-
-                {{ (item_resp.content.parent.id | default(''))
-                   if req_type == 'item' else (req_id if req_type == 'location' else '') }}
+                {{ req_id if is_location else
+                   ((entity_resp.content.get('location') or {}).get('id')
+                    or (entity_resp.content.get('parent') or {}).get('id')
+                    or '') }}
 
           - if:
               - condition: template
@@ -125,8 +194,12 @@ action:
               # matters, so take just the prefix instead of requiring an exact
               # length match on the whole name.
               code: "{{ ((location_resp.content.name | default('')) | upper | trim)[:4] }}"
-              parent_name: "{{ location_resp.content.parent.name | default('') }}"
-              parent_id: "{{ location_resp.content.parent.id | default('') }}"
+              # .get()-based, not dot-notation — same omitempty reasoning
+              # as entity_resp above: a top-level location has no
+              # parent, and Homebox's backend drops that key from the
+              # JSON entirely rather than sending it as null.
+              parent_name: "{{ (location_resp.content.get('parent') or {}).get('name', '') }}"
+              parent_id: "{{ (location_resp.content.get('parent') or {}).get('id', '') }}"
 
           # Location's parent only had an id, not an inlined name — one more hop.
           - if:
@@ -144,20 +217,31 @@ action:
           - variables:
               unit: "{{ (parent_name | upper | trim)[:2] }}"
               row_map: {A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7}
-              # offset = this column's starting LED within its segment (running
-              # total of the LED counts — 8 + rows1 + rows2 — of every column
-              # before it in the same segment). rows1/rows2 are that column's own
-              # top/bottom row counts; they are NOT uniform across columns.
+              # Each unit now owns two DEDICATED WLED segments — y_seg
+              # and x_seg (that unit's Y-axis and X-axis LEDs, both
+              # running the same idle Breathe effect) — rather than
+              # one shared segment
+              # per physical bus. This is why offset/led_offset are gone
+              # from this map entirely: x_indices/y_index below are now
+              # local indices within each unit's own dedicated segment
+              # (0-7 for X, 0 to rows1+rows2-1 for Y), not positions
+              # within a bigger shared segment. rows1/rows2 (that
+              # column's own top/bottom row counts, NOT uniform across
+              # columns) are unchanged from every earlier layout — only
+              # the segment model around them changed. See
+              # create-segments.sh for the matching physical segment
+              # boundaries and README's LED addressing model for the
+              # full breakdown of why per-unit segments were needed.
               unit_map:
-                A: {seg: 0, offset: 0,  rows1: 8, rows2: 5}
-                B: {seg: 0, offset: 21, rows1: 7, rows2: 5}
-                C: {seg: 1, offset: 0,  rows1: 8, rows2: 5}
-                D: {seg: 1, offset: 21, rows1: 7, rows2: 5}
-                E: {seg: 2, offset: 0,  rows1: 7, rows2: 5}
-                I: {seg: 2, offset: 20, rows1: 6, rows2: 5}
-                F: {seg: 3, offset: 0,  rows1: 6, rows2: 5}
-                G: {seg: 3, offset: 19, rows1: 6, rows2: 5}
-                H: {seg: 3, offset: 38, rows1: 6, rows2: 5}
+                A: {y_seg: 0, x_seg: 9,  rows1: 8, rows2: 5}
+                B: {y_seg: 1, x_seg: 10, rows1: 7, rows2: 5}
+                C: {y_seg: 2, x_seg: 11, rows1: 8, rows2: 5}
+                D: {y_seg: 3, x_seg: 12, rows1: 7, rows2: 5}
+                E: {y_seg: 4, x_seg: 13, rows1: 7, rows2: 5}
+                F: {y_seg: 5, x_seg: 14, rows1: 6, rows2: 5}
+                G: {y_seg: 6, x_seg: 15, rows1: 6, rows2: 5}
+                H: {y_seg: 7, x_seg: 16, rows1: 6, rows2: 5}
+                I: {y_seg: 8, x_seg: 17, rows1: 6, rows2: 5}
               unit_letter: "{{ unit[0] if unit | length == 2 else '' }}"
               # HA auto-coerces template results that round-trip cleanly through
               # int() into native ints (a lone digit like "2" becomes int 2,
@@ -216,21 +300,26 @@ action:
                    (unit_number == 2 and row_map[row_letter] <= rows2 - 1)
                 ) }}
               is_valid: "{{ unit_valid and code_valid and col_valid and row_valid }}"
-              led_offset: "{{ unit_map[unit_letter].offset if is_valid else none }}"
-              seg_id: "{{ unit_map[unit_letter].seg if is_valid else none }}"
+              y_seg_id: "{{ unit_map[unit_letter].y_seg if is_valid else none }}"
+              x_seg_id: "{{ unit_map[unit_letter].x_seg if is_valid else none }}"
               physical_slots: "{{ active_col_map[col_number | int | string] if is_valid else [] }}"
-              # Strip starts at each column's bottom-left LED (index 0 = bottom
-              # row of the bottom unit) and ends at top-right (index = block's
-              # last LED = column 8) — the reverse of the old top-right start.
-              x_base: "{{ (led_offset + rows1 + rows2 - 1) if is_valid else none }}"
+              # x_seg is a dedicated 8-LED segment per unit now, so
+              # physical_slots (1-8) just need to become 0-based local
+              # indices — no more offset/x_base arithmetic, since there's
+              # no shared segment left to be offset within.
               # 1 or 2 LEDs depending on whether this code hit a wide/merged bin.
               x_indices: >-
-                {{ [x_base + physical_slots[0]] if physical_slots | length == 1
-                   else [x_base + physical_slots[0], x_base + physical_slots[1]] if physical_slots | length == 2
+                {{ [physical_slots[0] - 1] if physical_slots | length == 1
+                   else [physical_slots[0] - 1, physical_slots[1] - 1] if physical_slots | length == 2
                    else [] }}
+              # Same idea for y_seg: local index within that unit's own
+              # dedicated Y segment (0 to rows1+rows2-1), not a position
+              # within a bigger shared segment. Counting still runs from
+              # the bottom-left LED (index 0) to top-right, same
+              # direction as before, just no longer offset by anything.
               y_index: >-
-                {{ (led_offset + rows1 + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 1)
-                   else (led_offset + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 2)
+                {{ (rows1 + rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 1)
+                   else (rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 2)
                    else none }}
 
           # Powers WLED back on as its own completed request first, in
@@ -242,6 +331,11 @@ action:
           # hardware itself needs a moment to settle after being
           # re-enabled, not just a separate on/off API call.
           - service: rest_command.wled_power_on
+          # Same idle period also turns the display's backlight off (see
+          # the off_delay branch below) to save its lifespan — turn it
+          # back on unconditionally here too, same "always call it, it's
+          # a no-op if already on" treatment as wled_power_on.
+          - service: rest_command.esp32_display_backlight_on
           - delay:
               milliseconds: 300
           - service: rest_command.wled_clear_all
@@ -251,13 +345,14 @@ action:
             then:
               - service: rest_command.wled_set_xy
                 data:
-                  seg_id: "{{ seg_id }}"
+                  y_seg_id: "{{ y_seg_id }}"
+                  x_seg_id: "{{ x_seg_id }}"
                   x_indices: "{{ x_indices }}"
                   y_index: "{{ y_index }}"
                   color: "{{ highlight_color }}"
 
       # Checked every minute: how long since the last real webhook call,
-      # compared against the two configurable delays. scan_delay/off_delay
+      # compared against the two configurable delays. breathe_delay/off_delay
       # default to 5/30 if the helpers are ever unavailable.
       - conditions:
           - condition: trigger
@@ -266,7 +361,7 @@ action:
           - variables:
               idle_minutes: >-
                 {{ (now() - states.input_number.homebox_activity_counter.last_changed).total_seconds() / 60 }}
-              scan_delay: "{{ states('input_number.homebox_idle_scan_delay') | int(5) }}"
+              breathe_delay: "{{ states('input_number.homebox_idle_breathe_delay') | int(5) }}"
               off_delay: "{{ states('input_number.homebox_idle_power_off_delay') | int(30) }}"
           - if:
               - condition: template
@@ -275,27 +370,33 @@ action:
                      and not is_state('input_boolean.homebox_powered_off_internal', 'on') }}
             then:
               - service: rest_command.wled_power_off
+              # Reuses the same off_delay as WLED's power-off, on the
+              # theory that if the LEDs have been idle long enough to
+              # power off, the display isn't being looked at either —
+              # turning the backlight off saves its lifespan. Requires
+              # BL physically rewired to a GPIO — see TFT_BL's comment
+              # in homebox_display.ino; harmless no-op otherwise.
+              - service: rest_command.esp32_display_backlight_off
               - service: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.homebox_powered_off_internal
           - if:
               - condition: template
                 value_template: >-
-                  {{ idle_minutes >= scan_delay and idle_minutes < off_delay
-                     and not is_state('input_boolean.homebox_scan_started_internal', 'on') }}
+                  {{ idle_minutes >= breathe_delay and idle_minutes < off_delay
+                     and not is_state('input_boolean.homebox_breathe_started_internal', 'on') }}
             then:
               - variables:
-                  scan_rgb: >-
+                  breathe_rgb: >-
                     {{ [highlight_color[0:2] | int(0, 16),
                         highlight_color[2:4] | int(0, 16),
                         highlight_color[4:6] | int(0, 16)] }}
-              - service: rest_command.wled_start_scan
+              - service: rest_command.wled_start_breathe
                 data:
-                  r: "{{ scan_rgb[0] }}"
-                  g: "{{ scan_rgb[1] }}"
-                  b: "{{ scan_rgb[2] }}"
-                  sx: "{{ states('input_number.homebox_scan_effect_speed') | int(128) }}"
-                  ix: "{{ states('input_number.homebox_scan_effect_tail_size') | int(128) }}"
+                  r: "{{ breathe_rgb[0] }}"
+                  g: "{{ breathe_rgb[1] }}"
+                  b: "{{ breathe_rgb[2] }}"
+                  breathe_sx: "{{ states('input_number.homebox_breathe_effect_speed') | int(128) }}"
               - service: input_boolean.turn_on
                 target:
-                  entity_id: input_boolean.homebox_scan_started_internal
+                  entity_id: input_boolean.homebox_breathe_started_internal

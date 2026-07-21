@@ -1,0 +1,95 @@
+# Add via Settings → Automations & Scenes → Create Automation → Edit in
+# YAML, or paste directly into automations.yaml.
+#
+# Fired by the ESP32 firmware when the "acknowledge" button is pressed —
+# the display stages +/- quantity changes locally and only calls out to
+# HA once, on acknowledge, rather than on every button press (see the
+# README's display architecture section for why). Uses its own webhook,
+# separate from homebox-highlight — safe to do here since this is the
+# only automation registering it (the reason homebox_location_viewed had
+# to be an event instead of a webhook was specifically two automations
+# both wanting the *same* webhook_id).
+#
+# webhook_id is a shared secret exactly like homebox-highlight's — use a
+# long random string, not the literal value below.
+#
+# On acknowledge this: commits the quantity to Homebox; treats
+# acknowledge as activity for automation.yaml's idle tracking — bumping
+# the counter and resetting the idle-stage flags (including
+# display_automation.yaml's own display-timeout flag) — since otherwise
+# the off-timer would keep counting from whatever the last real
+# navigation was, not from this interaction, and idle_check could
+# redundantly re-trigger a breathe effect that's already running;
+# restores the display backlight in case it had gone idle-off; clears
+# the WLED highlight and immediately starts the idle breathe effect (a
+# deliberate "job's done" visual, not waiting for the normal idle
+# timeout); and clears the display back to its idle logo.
+
+alias: "Homebox display acknowledge"
+trigger:
+  - platform: webhook
+    webhook_id: homebox-display-ack
+    allowed_methods: [POST]
+    local_only: false
+action:
+  - variables:
+      item_id: "{{ trigger.json.get('item_id', '') }}"
+      quantity: "{{ trigger.json.get('quantity', none) }}"
+  - if:
+      - condition: template
+        value_template: "{{ item_id | length > 0 and quantity is not none }}"
+    then:
+      - service: rest_command.homebox_patch_quantity
+        data:
+          entity_id: "{{ item_id }}"
+          quantity: "{{ quantity }}"
+
+      # Counts as activity, same as a real navigation — see the header
+      # comment above for why.
+      - service: input_number.increment
+        target:
+          entity_id: input_number.homebox_activity_counter
+      - service: input_boolean.turn_off
+        target:
+          entity_id:
+            - input_boolean.homebox_powered_off_internal
+            - input_boolean.homebox_display_timed_out_internal
+      # In case the backlight went off from idle before ack was pressed
+      # — see esp32_display_backlight_off in automation.yaml.
+      - service: rest_command.esp32_display_backlight_on
+
+      # Clear the highlight, then immediately go to the breathe effect —
+      # this duplicates automation.yaml's color_map/highlight_color and
+      # the idle_check branch's breathe_rgb computation on purpose, the
+      # same "separate automation, own small resolution" tradeoff
+      # already made for display_automation.yaml.
+      - service: rest_command.wled_clear_all
+      - variables:
+          color_map:
+            Red: "FF0000"
+            Orange: "FF3B00"
+            Yellow: "FFC800"
+            Green: "00FF00"
+            Blue: "0000FF"
+            Purple: "8000FF"
+            White: "FFFFFF"
+            Cyan: "00FFFF"
+          highlight_color: "{{ color_map.get(states('input_select.homebox_highlight_color'), 'FF0000') }}"
+          breathe_rgb: >-
+            {{ [highlight_color[0:2] | int(0, 16),
+                highlight_color[2:4] | int(0, 16),
+                highlight_color[4:6] | int(0, 16)] }}
+      - service: rest_command.wled_start_breathe
+        data:
+          r: "{{ breathe_rgb[0] }}"
+          g: "{{ breathe_rgb[1] }}"
+          b: "{{ breathe_rgb[2] }}"
+          breathe_sx: "{{ states('input_number.homebox_breathe_effect_speed') | int(128) }}"
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.homebox_breathe_started_internal
+
+      # Clears the display's text/quantity and shows the baked-in idle
+      # logo — see handleClear() and the logo array in
+      # homebox_display.ino.
+      - service: rest_command.esp32_display_clear

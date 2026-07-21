@@ -1,0 +1,18 @@
+# Add to configuration.yaml (or split into a packages file).
+# After editing, reload via Developer Tools → YAML → Reload Shell Commands
+# — no full HA restart needed.
+#
+# IMPORTANT if you use `shell_command: !include shell_commands.yaml` in
+# configuration.yaml: the top-level `shell_command:` key below must come
+# OUT of the file first — the !include line already supplies that
+# wrapper. See rest_commands.yaml's header comment for the full
+# explanation (this is the same class of mistake, same fix).
+#
+# push_display_image.sh does the actual image fetch/convert/push — kept
+# as a standalone script (see its own header comment) since a binary
+# body has no sane way to flow through rest_command's Jinja-rendered
+# text payloads. Path here assumes the default HA config directory;
+# adjust if yours differs.
+
+shell_command:
+  push_display_image: "/config/push_display_image.sh {{ item_id }} {{ attachment_id }}"
