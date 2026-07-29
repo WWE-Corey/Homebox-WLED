@@ -6,8 +6,11 @@
 <title>Homebox Location Labels</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-  h1 { font-size: 1.3rem; }
-  #search { width: 100%; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; margin-bottom: 1rem; }
+  h1 { font-size: 1.3rem; margin-bottom: 0.75rem; }
+  #topBar { position: sticky; top: 0; background: white; z-index: 10; padding-top: 0.5rem; padding-bottom: 0.75rem; }
+  #controls { display: flex; gap: 0.5rem; }
+  #search { flex: 1; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; }
+  #clearBtn { padding: 0.5rem 0.8rem; font-size: 0.9rem; cursor: pointer; }
   .group { margin-bottom: 1.2rem; }
   .group-header { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; margin-bottom: 0.4rem; }
   .location-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0 0.2rem 1.4rem; }
@@ -24,8 +27,13 @@
 </head>
 <body>
 
-<h1>Homebox Location Labels</h1>
-<input type="text" id="search" placeholder="Search locations...">
+<div id="topBar">
+  <h1>Homebox Location Labels</h1>
+  <div id="controls">
+    <input type="text" id="search" placeholder="Search locations...">
+    <button id="clearBtn">Clear Selected</button>
+  </div>
+</div>
 <div id="list">Loading locations&hellip;</div>
 
 <div id="printBar">
@@ -107,6 +115,12 @@ function updatePrintButton() {
 }
 
 document.getElementById('search').addEventListener('input', (e) => render(e.target.value));
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  document.querySelectorAll('.loc-cb:checked').forEach(cb => { cb.checked = false; });
+  document.querySelectorAll('.group-header input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+  updatePrintButton();
+});
 
 document.getElementById('printBtn').addEventListener('click', async () => {
   const ids = [...document.querySelectorAll('.loc-cb:checked')].map(cb => cb.value);

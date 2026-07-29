@@ -897,19 +897,22 @@ Resolved, kept as reference for anyone touching this again:
   response's `EntitySummary` items already carry `description` and a
   nested `parent` (`id`/`name`) directly, matching what the picker page
   needs with no extra per-item fetch.
-- **b-PAC's `doc.Close()`**: fails with `TypeError: 'bool' object is not
-  callable` under `win32com.client.Dispatch("bpac.Document")` — late-bound
-  dynamic dispatch can't tell a zero-arg method from a property without
-  the real COM type library, guesses property, and hands back `Close`'s
-  boolean return value instead of letting it be called. The usual fix,
-  `win32com.client.gencache.EnsureDispatch("bpac.Document")` (builds a
-  typed wrapper from the COM type library so this resolves correctly),
-  does **not** work for b-PAC specifically — it fails with `TypeError:
-  This COM object can not automate the makepy process`, because b-PAC's
-  COM object doesn't answer `GetTypeInfo()` the way gencache needs.
-  `print_labels()` works around this by never calling `Close()` at all —
-  dropping the last Python reference to `doc` releases the COM object via
-  normal reference counting, which is what `Close()` would have done
-  anyway. The rest of the `Open`/`GetObject`/`StartPrint`/`PrintOut`/
-  `EndPrint` sequence worked as originally written — confirmed against a
-  real print on the D610BT, correct content on the physical label.
+- **b-PAC's zero-arg methods (`Close()`, `EndPrint()`)**: both fail with
+  `TypeError: 'bool' object is not callable` under
+  `win32com.client.Dispatch("bpac.Document")` — late-bound dynamic
+  dispatch can't tell a zero-arg method from a property without the real
+  COM type library, guesses property, and hands back the method's boolean
+  return value instead of letting it be called. `EndPrint()` failing this
+  way doesn't stop the physical print (it already happened by the time
+  `EndPrint()` runs), but it does make every print falsely report as
+  failed. The usual fix, `win32com.client.gencache.EnsureDispatch
+  ("bpac.Document")` (builds a typed wrapper from the COM type library so
+  this resolves correctly), does **not** work for b-PAC specifically — it
+  fails with `TypeError: This COM object can not automate the makepy
+  process`, because b-PAC's COM object doesn't answer `GetTypeInfo()` the
+  way gencache needs. What actually works: `doc._FlagAsMethod("EndPrint")`
+  / `doc._FlagAsMethod("Close")` right after `Dispatch()` — tells the
+  dynamic dispatch object directly which members are methods, sidestepping
+  the property/method guess entirely. Confirmed against a real print on
+  the D610BT: correct content on the physical label, no false failure
+  reported.
