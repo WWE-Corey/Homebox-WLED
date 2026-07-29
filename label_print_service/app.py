@@ -90,16 +90,23 @@ def print_labels(locations):
     location, setting the three template objects confirmed by inspecting
     the .lbx (label.xml): Text5=name, Text7=description, Barcode1=QR data.
 
-    NOT yet exercised against real hardware — the exact b-PAC call
-    sequence (StartPrint/PrintOut/EndPrint args) follows Brother's
-    standard documented sample pattern, confirmed against real hardware —
-    prints correctly. Uses gencache.EnsureDispatch rather than plain
-    Dispatch: with plain (late-bound) Dispatch, doc.Close() fails with
-    "TypeError: 'bool' object is not callable" — win32com can't tell a
-    zero-arg method from a property without the real COM type library and
-    guesses property, handing back Close's boolean return value instead
-    of letting it be called. EnsureDispatch builds a typed wrapper from
-    b-PAC's actual type library so this is resolved correctly.
+    Confirmed against real hardware — the Open/GetObject/StartPrint/
+    PrintOut/EndPrint sequence below prints correctly on the D610BT.
+
+    Deliberately never calls doc.Close(): under plain (late-bound)
+    win32com.client.Dispatch, Close() fails with "TypeError: 'bool'
+    object is not callable" — win32com can't tell a zero-arg method from
+    a property without the real COM type library, guesses property, and
+    hands back Close's boolean return value instead of letting it be
+    called. The usual fix (win32com.client.gencache.EnsureDispatch, which
+    builds a typed wrapper from the type library so this resolves
+    correctly) doesn't work here either — b-PAC's COM object fails
+    gencache's own GetTypeInfo() call ("This COM object can not automate
+    the makepy process"). Simplest working option: don't call Close() at
+    all — dropping the last Python reference to doc (the `doc = None` in
+    the finally block below) releases the underlying COM object via
+    normal reference counting, which is what Close() would have
+    triggered anyway.
 
     Returns (success_count, errors) where errors is a list of
     {id, name, error} for locations that failed to print (doesn't abort
@@ -109,32 +116,31 @@ def print_labels(locations):
     import win32com.client
 
     pythoncom.CoInitialize()
+    doc = None
     try:
-        doc = win32com.client.gencache.EnsureDispatch("bpac.Document")
+        doc = win32com.client.Dispatch("bpac.Document")
         if not doc.Open(config.LBX_TEMPLATE_PATH):
             raise RuntimeError(
                 f"b-PAC could not open template: {config.LBX_TEMPLATE_PATH}"
             )
         success = 0
         errors = []
-        try:
-            for loc in locations:
-                try:
-                    doc.GetObject("Text5").Text = loc["name"] or ""
-                    doc.GetObject("Text7").Text = loc["description"] or ""
-                    doc.GetObject("Barcode1").Text = (
-                        f"{config.HOMEBOX_URL}/location/{loc['id']}"
-                    )
-                    doc.StartPrint("", 0)
-                    doc.PrintOut(1, 0)
-                    doc.EndPrint()
-                    success += 1
-                except Exception as e:  # noqa: BLE001 - surface per-label, keep going
-                    errors.append({"id": loc["id"], "name": loc.get("name"), "error": str(e)})
-        finally:
-            doc.Close()
+        for loc in locations:
+            try:
+                doc.GetObject("Text5").Text = loc["name"] or ""
+                doc.GetObject("Text7").Text = loc["description"] or ""
+                doc.GetObject("Barcode1").Text = (
+                    f"{config.HOMEBOX_URL}/location/{loc['id']}"
+                )
+                doc.StartPrint("", 0)
+                doc.PrintOut(1, 0)
+                doc.EndPrint()
+                success += 1
+            except Exception as e:  # noqa: BLE001 - surface per-label, keep going
+                errors.append({"id": loc["id"], "name": loc.get("name"), "error": str(e)})
         return success, errors
     finally:
+        doc = None
         pythoncom.CoUninitialize()
 
 

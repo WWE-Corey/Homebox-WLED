@@ -901,9 +901,15 @@ Resolved, kept as reference for anyone touching this again:
   callable` under `win32com.client.Dispatch("bpac.Document")` — late-bound
   dynamic dispatch can't tell a zero-arg method from a property without
   the real COM type library, guesses property, and hands back `Close`'s
-  boolean return value instead of letting it be called.
-  `win32com.client.gencache.EnsureDispatch("bpac.Document")` builds a
-  typed wrapper from b-PAC's actual type library instead, resolving it
-  correctly. The rest of the `Open`/`GetObject`/`StartPrint`/`PrintOut`/
+  boolean return value instead of letting it be called. The usual fix,
+  `win32com.client.gencache.EnsureDispatch("bpac.Document")` (builds a
+  typed wrapper from the COM type library so this resolves correctly),
+  does **not** work for b-PAC specifically — it fails with `TypeError:
+  This COM object can not automate the makepy process`, because b-PAC's
+  COM object doesn't answer `GetTypeInfo()` the way gencache needs.
+  `print_labels()` works around this by never calling `Close()` at all —
+  dropping the last Python reference to `doc` releases the COM object via
+  normal reference counting, which is what `Close()` would have done
+  anyway. The rest of the `Open`/`GetObject`/`StartPrint`/`PrintOut`/
   `EndPrint` sequence worked as originally written — confirmed against a
   real print on the D610BT, correct content on the physical label.
