@@ -8,7 +8,10 @@ physical LED strip mounted around the units.
 
 A second, complementary piece — an ESP32 + SPI TFT "Location Display" —
 runs on top of the same event pipeline: see [Location Display (ESP32 +
-TFT)](#location-display-esp32--tft) below.
+TFT)](#location-display-esp32--tft) below. A third, independent piece —
+a small web page for printing location bin labels — shares nothing with
+the event pipeline but lives in this repo too: see [Label Printing
+(Brother P-touch)](#label-printing-brother-p-touch) below.
 
 ## Why this exists
 
@@ -764,3 +767,143 @@ that side's list.
       `secrets.yaml`; HA now does all Homebox API resolution server-side
       (see `automation.yaml`). It's still a full-access token, but it's
       no longer visible via browser dev tools.
+
+## Label Printing (Brother P-touch)
+
+Separate from the LED/display side entirely — a small internal web page
+for printing Homebox location bin labels on a label maker, since
+Homebox's own built-in label generator doesn't have the layout/content
+this project wants.
+
+### What it adds
+
+A Flask web page, `label_print_service/`, that lists every Homebox
+location (grouped by parent unit, with search) behind checkboxes, and
+prints one label per selection in a single batch — covering both the
+"reprint one bin" case and the "just wired up a whole new unit" case
+without two different tools.
+
+### Hardware
+
+**Printer**: Brother P-touch D610BT, USB-attached to a Windows PC at
+`192.168.30.39`, which also has P-touch Editor 6 and the b-PAC SDK
+installed. The service must run **on that Windows PC** — b-PAC is a
+Windows-only COM automation library, there's no cross-platform path
+here (unlike everything else in this project, which runs on Linux/HA/
+the ESP32).
+
+### Architecture
+
+```
+Any PC on the LAN (browser)
+        │  GET /  →  checkbox location picker (label_print_service/templates/index.html)
+        ▼
+label_print_service/app.py (Flask, runs on the Windows PC, 192.168.30.39)
+        │  GET /locations  →  Homebox GET /api/v1/locations, grouped by parent
+        │  POST /print {location_ids: [...]}
+        │      ├─ per id: Homebox GET /api/v1/entities/{id}  (name + description —
+        │      │     same proven endpoint display_automation.yaml already uses)
+        │      └─ b-PAC COM automation: open LocationBinLabel.lbx once, then per
+        │            label: set Text5=name, Text7=description,
+        │            Barcode1=HOMEBOX_URL+"/location/"+id (QR code), print, repeat
+        ▼
+Brother P-touch D610BT (USB)
+```
+
+**Why the QR code gets a constructed URL, not Homebox's raw `id`**: the
+`.lbx` template's `Barcode1` object is bound to the `id` merge field, but
+a bare UUID scanned by a phone does nothing useful — `app.py` builds
+`HOMEBOX_URL + "/location/" + id` (the same public Homebox domain used
+throughout this project's `.local.yaml` files) so scanning the label
+opens that location directly in Homebox.
+
+**Why detail is re-fetched per label instead of trusting the `/locations`
+list response**: `GET /api/v1/entities/{id}` is the one endpoint this
+project has already confirmed (via `display_automation.yaml`) reliably
+eager-loads what's needed; the flat `/locations` list is only trusted for
+`id`/`name`/parent (enough to render the picker), not `description`.
+
+**Why single-select and batch print share one code path**: `/print`
+always takes a list — printing one label is just a list of length 1, not
+a separate mode, so there's only one flow to test.
+
+### New files
+
+- `label_print_service/` — the whole service:
+  - `app.py` — Flask routes (`/`, `/locations`, `/print`) and the b-PAC
+    print logic. See its own header/function comments for the parts not
+    yet confirmed against a live Homebox instance or real hardware (the
+    exact `/api/v1/locations` response shape, and the b-PAC
+    StartPrint/PrintOut/EndPrint call sequence) — flagged there rather
+    than claimed working, since neither has been exercised for real yet.
+  - `templates/index.html` — the picker page: search box, checkboxes
+    grouped by parent unit with a per-group "select all", a sticky
+    Print button showing the current selection count, and inline
+    success/error reporting per label after a print.
+  - `config.py.example` — tracked template for `config.py` (gitignored,
+    same credential-isolation convention as the rest of this project —
+    see `.gitignore`'s comment). Copy it and fill in `HOMEBOX_URL`,
+    `HOMEBOX_AUTH_HEADER`, and `LBX_TEMPLATE_PATH`.
+  - `requirements.txt` — `flask`, `requests`, `pywin32`.
+- `LocationBinLabel.lbx` (repo root) — the P-touch Editor label template
+  this service drives. Its three named objects, found by unzipping it
+  and reading `label.xml`: `Text5` (name, bold), `Text7` (description,
+  smaller), `Barcode1` (QR code). Edit the label's layout/fonts/size in
+  P-touch Editor as usual — `app.py` only ever sets these three objects'
+  text, it doesn't touch layout.
+
+### Setup (on the Windows PC, 192.168.30.39)
+
+1. Install Python 3 if not already present, then from
+   `label_print_service/`: `pip install -r requirements.txt`.
+2. Confirm the b-PAC SDK is registered for COM automation (already
+   installed per the printer setup) — `pip install pywin32` alone is
+   just the Python↔COM bridge, it doesn't install b-PAC itself.
+3. Copy `config.py.example` to `config.py` and fill in real values:
+   Homebox's real URL, a dedicated API token (create one in Homebox
+   under Profile → API Tokens rather than reusing Home Assistant's), and
+   the absolute path to `LocationBinLabel.lbx` on this machine.
+4. Open a port in Windows Firewall for whatever `PORT` you set in
+   `config.py` (5151 by default): `netsh advfirewall firewall add rule
+   name="Label Print Service" dir=in action=allow protocol=TCP
+   localport=5151`.
+5. Test manually first: `python app.py`, then from another PC on the
+   LAN, browse to `http://192.168.30.39:5151/`. Confirm locations load
+   and grouping looks right, select one, and print it — check the
+   physical label against what P-touch Editor shows for the same
+   template before trusting a full batch run.
+6. Once a manual run prints correctly, make it start automatically:
+   Task Scheduler → new task, trigger "At log on" (or "At startup" if it
+   should run before anyone logs in — printing via COM automation
+   usually doesn't need an interactive desktop, but hasn't been
+   confirmed either way on this printer/driver yet, so start with "At
+   log on" and only switch if that turns out to be inconvenient),
+   action runs `pythonw.exe app.py` from `label_print_service/`
+   (`pythonw`, not `python`, so no console window stays open).
+
+### Open items
+
+- [ ] Task Scheduler vs. "at startup" vs. interactive-session requirement
+      for COM-based printing not yet settled — see step 6 above.
+
+Resolved, kept as reference for anyone touching this again:
+
+- **`fetch_locations()`'s endpoint**: there's no `/api/v1/locations`
+  route — confirmed against Homebox's actual backend source
+  (`sysadminsmedia/homebox`, `backend/app/api/routes.go` +
+  `repo_entities.go`): locations and items share `GET /api/v1/entities`,
+  which defaults to items-only for backward compatibility, so listing
+  locations needs the explicit `isLocation=true` query param. The
+  response's `EntitySummary` items already carry `description` and a
+  nested `parent` (`id`/`name`) directly, matching what the picker page
+  needs with no extra per-item fetch.
+- **b-PAC's `doc.Close()`**: fails with `TypeError: 'bool' object is not
+  callable` under `win32com.client.Dispatch("bpac.Document")` — late-bound
+  dynamic dispatch can't tell a zero-arg method from a property without
+  the real COM type library, guesses property, and hands back `Close`'s
+  boolean return value instead of letting it be called.
+  `win32com.client.gencache.EnsureDispatch("bpac.Document")` builds a
+  typed wrapper from b-PAC's actual type library instead, resolving it
+  correctly. The rest of the `Open`/`GetObject`/`StartPrint`/`PrintOut`/
+  `EndPrint` sequence worked as originally written — confirmed against a
+  real print on the D610BT, correct content on the physical label.

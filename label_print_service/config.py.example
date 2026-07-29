@@ -1,0 +1,26 @@
+# Copy this file to config.py (gitignored — see ../.gitignore) and fill
+# in real values. Same credential-isolation convention as the rest of
+# this project (rest_commands.local.yaml etc.), just Python-shaped
+# since config.py is imported by name rather than swapped by suffix.
+
+# Homebox's own public URL — same domain used throughout this project's
+# .local.yaml files. Used both for API calls and to build the QR code's
+# destination URL (HOMEBOX_URL + "/location/" + id).
+HOMEBOX_URL = "https://homebox.url"
+
+# Full Authorization header value, including the "Bearer " prefix — same
+# format as rest_commands.yaml's homebox_auth_header secret. Create a
+# dedicated token for this service in Homebox (Profile -> API Tokens)
+# rather than reusing Home Assistant's — keeps blast radius contained
+# and makes it easy to revoke independently.
+HOMEBOX_AUTH_HEADER = "Bearer hb_xxxxxxxxxxxxxxxx"
+
+# Absolute path to the label template on THIS machine (the Windows PC
+# running this service, next to the printer).
+LBX_TEMPLATE_PATH = r"C:\path\to\LocationBinLabel.lbx"
+
+# Host/port this Flask service listens on. 0.0.0.0 so other PCs on the
+# LAN can reach it, not just this machine — remember to also open this
+# port in Windows Firewall (see README's setup instructions).
+HOST = "0.0.0.0"
+PORT = 5151

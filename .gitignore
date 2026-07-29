@@ -23,3 +23,13 @@ wifi_credentials.h
 # (100+ MB: compiled objects plus the full lvgl/ArduinoJson/etc. library
 # trees PlatformIO's package manager fetches on first build).
 .pio/
+
+# label_print_service's own Homebox token + template path — must keep
+# this exact filename since app.py imports it directly (same reason as
+# wifi_credentials.h above, can't use the .local. convention). See
+# config.py.example for the tracked template.
+label_print_service/config.py
+
+# Python bytecode cache — regenerated on every run, not source.
+__pycache__/
+*.pyc

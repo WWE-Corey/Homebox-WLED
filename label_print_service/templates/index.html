@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homebox Location Labels</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.3rem; }
+  #search { width: 100%; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; margin-bottom: 1rem; }
+  .group { margin-bottom: 1.2rem; }
+  .group-header { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; margin-bottom: 0.4rem; }
+  .location-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0 0.2rem 1.4rem; }
+  .location-row label { cursor: pointer; }
+  .group-header label { cursor: pointer; }
+  #printBar { position: sticky; bottom: 0; background: white; padding: 0.75rem 0; border-top: 1px solid #ddd; margin-top: 1rem; }
+  #printBtn { font-size: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
+  #printBtn:disabled { cursor: not-allowed; opacity: 0.5; }
+  #status { margin-top: 0.75rem; white-space: pre-wrap; font-size: 0.9rem; }
+  #status.error { color: #b00020; }
+  #status.ok { color: #146c2e; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Homebox Location Labels</h1>
+<input type="text" id="search" placeholder="Search locations...">
+<div id="list">Loading locations&hellip;</div>
+
+<div id="printBar">
+  <button id="printBtn" disabled>Print Selected (0)</button>
+  <div id="status"></div>
+</div>
+
+<script>
+let allLocations = [];
+
+function groupByParent(locations) {
+  const groups = new Map();
+  for (const loc of locations) {
+    const key = loc.parent_name || 'Ungrouped';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(loc);
+  }
+  return groups;
+}
+
+function render(filterText) {
+  const listEl = document.getElementById('list');
+  const filter = (filterText || '').trim().toLowerCase();
+  const filtered = filter
+    ? allLocations.filter(l => l.name.toLowerCase().includes(filter) || l.parent_name.toLowerCase().includes(filter))
+    : allLocations;
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<p>No locations match.</p>';
+    return;
+  }
+
+  const groups = groupByParent(filtered);
+  listEl.innerHTML = '';
+  for (const [groupName, locs] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'group';
+
+    const header = document.createElement('div');
+    header.className = 'group-header';
+    const groupCb = document.createElement('input');
+    groupCb.type = 'checkbox';
+    groupCb.addEventListener('change', () => {
+      groupDiv.querySelectorAll('.loc-cb').forEach(cb => { cb.checked = groupCb.checked; });
+      updatePrintButton();
+    });
+    const groupLabel = document.createElement('label');
+    groupLabel.textContent = groupName;
+    header.appendChild(groupCb);
+    header.appendChild(groupLabel);
+    groupDiv.appendChild(header);
+
+    for (const loc of locs.sort((a, b) => a.name.localeCompare(b.name))) {
+      const row = document.createElement('div');
+      row.className = 'location-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'loc-cb';
+      cb.value = loc.id;
+      cb.id = 'loc-' + loc.id;
+      cb.addEventListener('change', updatePrintButton);
+      const label = document.createElement('label');
+      label.htmlFor = cb.id;
+      label.textContent = loc.name;
+      row.appendChild(cb);
+      row.appendChild(label);
+      groupDiv.appendChild(row);
+    }
+
+    listEl.appendChild(groupDiv);
+  }
+}
+
+function updatePrintButton() {
+  const count = document.querySelectorAll('.loc-cb:checked').length;
+  const btn = document.getElementById('printBtn');
+  btn.textContent = `Print Selected (${count})`;
+  btn.disabled = count === 0;
+}
+
+document.getElementById('search').addEventListener('input', (e) => render(e.target.value));
+
+document.getElementById('printBtn').addEventListener('click', async () => {
+  const ids = [...document.querySelectorAll('.loc-cb:checked')].map(cb => cb.value);
+  const statusEl = document.getElementById('status');
+  const btn = document.getElementById('printBtn');
+  btn.disabled = true;
+  statusEl.className = '';
+  statusEl.textContent = `Printing ${ids.length} label(s)...`;
+
+  try {
+    const resp = await fetch('/print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location_ids: ids }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      statusEl.className = 'error';
+      statusEl.textContent = 'Error: ' + (data.error || resp.statusText);
+    } else {
+      const problems = [...(data.fetch_errors || []), ...(data.print_errors || [])];
+      if (problems.length === 0) {
+        statusEl.className = 'ok';
+        statusEl.textContent = `Printed ${data.printed} of ${data.requested} label(s).`;
+      } else {
+        statusEl.className = 'error';
+        statusEl.textContent = `Printed ${data.printed} of ${data.requested}. Problems:\n` +
+          problems.map(p => `- ${p.name || p.id}: ${p.error}`).join('\n');
+      }
+    }
+  } catch (err) {
+    statusEl.className = 'error';
+    statusEl.textContent = 'Request failed: ' + err;
+  } finally {
+    updatePrintButton();
+  }
+});
+
+fetch('/locations')
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      document.getElementById('list').innerHTML = '<p class="error">Failed to load locations: ' + data.error + '</p>';
+      return;
+    }
+    allLocations = data;
+    render('');
+  })
+  .catch(err => {
+    document.getElementById('list').innerHTML = '<p class="error">Failed to load locations: ' + err + '</p>';
+  });
+</script>
+</body>
+</html>
