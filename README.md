@@ -872,22 +872,32 @@ a separate mode, so there's only one flow to test.
    and grouping looks right, select one, and print it — check the
    physical label against what P-touch Editor shows for the same
    template before trusting a full batch run.
-6. Once a manual run prints correctly, make it start automatically:
-   Task Scheduler → new task, trigger "At log on" (or "At startup" if it
-   should run before anyone logs in — printing via COM automation
-   usually doesn't need an interactive desktop, but hasn't been
-   confirmed either way on this printer/driver yet, so start with "At
-   log on" and only switch if that turns out to be inconvenient),
-   action runs `pythonw.exe app.py` from `label_print_service/`
-   (`pythonw`, not `python`, so no console window stays open).
+6. Once a manual run prints correctly, make it start automatically: Task
+   Scheduler → new task, trigger "At log on" — confirmed working across
+   a real reboot with the action running `venv\Scripts\pythonw.exe
+   app.py` from `label_print_service/` (`pythonw`, not `python`, so no
+   console window stays open). Uncheck the Settings tab's "Stop the task
+   if it runs longer than: 3 days" (checked by default, would silently
+   kill this long-running process after 3 days). "At startup"/
+   non-interactive hasn't been tried — this only needed the interactive
+   "At log on" option so far. See Open Items below for the full writeup.
 
 ### Open items
 
-- [ ] Task Scheduler vs. "at startup" vs. interactive-session requirement
-      for COM-based printing not yet settled — see step 6 above.
+None currently — see Resolved below for the auto-start and API/COM
+gotchas found getting this running for real.
 
 Resolved, kept as reference for anyone touching this again:
 
+- **Auto-start on boot**: Task Scheduler task, trigger "At log on" (not
+  "at startup"/"run whether logged on or not" — untested whether b-PAC's
+  COM automation works in a non-interactive session, so this stays on
+  the conservative option that's confirmed working), action running
+  `venv\Scripts\pythonw.exe app.py` from `label_print_service/`.
+  Confirmed working across a real reboot. One default Task Scheduler
+  setting to watch for: "Stop the task if it runs longer than: 3 days"
+  is checked by default and will silently kill this long-running Flask
+  process after 3 days of uptime if left on — uncheck it.
 - **`fetch_locations()`'s endpoint**: there's no `/api/v1/locations`
   route — confirmed against Homebox's actual backend source
   (`sysadminsmedia/homebox`, `backend/app/api/routes.go` +
