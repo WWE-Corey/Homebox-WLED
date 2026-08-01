@@ -926,3 +926,22 @@ Resolved, kept as reference for anyone touching this again:
   the property/method guess entirely. Confirmed against a real print on
   the D610BT: correct content on the physical label, no false failure
   reported.
+
+## Future Ideas
+
+Not scoped or started — recorded here so the idea isn't lost, not a
+commitment to build it next.
+
+- [ ] **Battery-operated, rechargeable, hand-held version of
+      `homebox_display`** with a built-in QR code scanner: scan a
+      location's or item's QR code (the same URLs already printed on
+      labels by `label_print_service` — see its Barcode1 object) to pull
+      up that location/item on the display, then adjust its quantity the
+      same way the wall-mounted display's +/-/acknowledge buttons do
+      today, with the same live on-hand-quantity visual. Needs its own
+      plan before work starts: battery/charging hardware, a QR scanner
+      module compatible with the ESP32 setup, and how much of
+      `homebox_display.ino`'s existing display/quantity-staging/webhook
+      logic carries over vs. needs rethinking for a portable, scan-driven
+      trigger instead of the wall unit's "whatever's being viewed in the
+      browser" signal.
