@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homebox Restock</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.3rem; margin-bottom: 0.75rem; }
+  #topBar { position: sticky; top: 0; background: white; z-index: 10; padding-top: 0.5rem; padding-bottom: 0.75rem; }
+  #search { width: 100%; padding: 0.6rem; font-size: 1.1rem; box-sizing: border-box; }
+  .item-row { border-bottom: 1px solid #ddd; padding: 0.6rem 0; }
+  .item-info { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+  .item-name { font-weight: 600; }
+  .item-meta { font-size: 0.85rem; color: #555; }
+  .restock-btn { padding: 0.4rem 0.8rem; font-size: 0.95rem; cursor: pointer; }
+  .restock-form { margin-top: 0.6rem; padding: 0.6rem; background: #f5f5f5; border-radius: 6px; }
+  .restock-form label { font-size: 0.95rem; }
+  .qty-input { width: 4rem; font-size: 1rem; padding: 0.2rem; margin-left: 0.4rem; }
+  .preview { margin: 0.5rem 0; font-size: 0.95rem; }
+  .confirm-btn { font-size: 1rem; padding: 0.5rem 1rem; cursor: pointer; }
+  .confirm-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+  .note { font-size: 0.85rem; color: #555; }
+  #status { margin-top: 1rem; white-space: pre-wrap; font-size: 0.95rem; position: sticky; bottom: 0; background: white; padding: 0.5rem 0; }
+  #status.error { color: #b00020; }
+  #status.ok { color: #146c2e; }
+</style>
+</head>
+<body>
+
+<div id="topBar">
+  <h1>Restock an Item</h1>
+  <input type="text" id="search" placeholder="Search by part name..." autofocus>
+</div>
+<div id="results"></div>
+<div id="status"></div>
+
+<script>
+let debounceTimer = null;
+
+const searchInput = document.getElementById('search');
+const resultsEl = document.getElementById('results');
+const statusEl = document.getElementById('status');
+
+searchInput.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  const q = searchInput.value.trim();
+  if (!q) { resultsEl.innerHTML = ''; return; }
+  debounceTimer = setTimeout(() => doSearch(q), 300);
+});
+
+async function doSearch(q) {
+  resultsEl.innerHTML = '<p>Searching&hellip;</p>';
+  try {
+    const resp = await fetch('/search?q=' + encodeURIComponent(q));
+    const data = await resp.json();
+    if (data.error) {
+      resultsEl.innerHTML = '<p class="note">Error: ' + escapeHtml(data.error) + '</p>';
+      return;
+    }
+    renderResults(data.items, data.total);
+  } catch (err) {
+    resultsEl.innerHTML = '<p class="note">Request failed: ' + escapeHtml(String(err)) + '</p>';
+  }
+}
+
+function renderResults(items, total) {
+  resultsEl.innerHTML = '';
+  if (items.length === 0) {
+    resultsEl.innerHTML = '<p>No matches.</p>';
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML =
+      '<div class="item-info">' +
+        '<div>' +
+          '<div class="item-name">' + escapeHtml(item.name) + '</div>' +
+          '<div class="item-meta">qty ' + item.quantity + ' in ' + escapeHtml(item.location_name) + '</div>' +
+        '</div>' +
+        '<button class="restock-btn">Restock</button>' +
+      '</div>';
+
+    const form = buildForm(item);
+    row.querySelector('.restock-btn').addEventListener('click', () => {
+      if (row.contains(form)) {
+        row.removeChild(form);
+      } else {
+        row.appendChild(form);
+      }
+    });
+    resultsEl.appendChild(row);
+  }
+  if (total > items.length) {
+    const note = document.createElement('p');
+    note.className = 'note';
+    note.textContent = (total - items.length) + ' more match(es) not shown — refine your search.';
+    resultsEl.appendChild(note);
+  }
+}
+
+function buildForm(item) {
+  const form = document.createElement('div');
+  form.className = 'restock-form';
+  form.innerHTML =
+    '<label>Adding: <input type="number" class="qty-input" value="1" min="1"></label>' +
+    '<div class="preview"></div>' +
+    '<button class="confirm-btn">Confirm &amp; Flash</button>';
+
+  const qtyInput = form.querySelector('.qty-input');
+  const preview = form.querySelector('.preview');
+  const confirmBtn = form.querySelector('.confirm-btn');
+
+  function updatePreview() {
+    const added = parseInt(qtyInput.value, 10) || 0;
+    const newQty = item.quantity + added;
+    preview.textContent = item.quantity + ' → ' + newQty + ' in ' + item.location_name;
+  }
+  qtyInput.addEventListener('input', updatePreview);
+  updatePreview();
+
+  confirmBtn.addEventListener('click', async () => {
+    const added = parseInt(qtyInput.value, 10) || 0;
+    const newQty = item.quantity + added;
+    confirmBtn.disabled = true;
+    statusEl.className = '';
+    statusEl.textContent = 'Restocking ' + item.name + '...';
+
+    try {
+      const resp = await fetch('/restock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: item.id, new_quantity: newQty }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        statusEl.className = 'error';
+        statusEl.textContent = 'Error: ' + (data.error || resp.statusText);
+      } else {
+        statusEl.className = 'ok';
+        statusEl.textContent = 'Done — ' + item.name + ' is now ' + newQty +
+          '. Bin flashed: go put it in ' + item.location_name + '.';
+        item.quantity = newQty;
+        updatePreview();
+      }
+    } catch (err) {
+      statusEl.className = 'error';
+      statusEl.textContent = 'Request failed: ' + err;
+    } finally {
+      confirmBtn.disabled = false;
+    }
+  });
+
+  return form;
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>

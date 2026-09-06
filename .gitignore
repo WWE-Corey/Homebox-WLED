@@ -30,10 +30,10 @@ wifi_credentials.h
 # config.py.example for the tracked template.
 label_print_service/config.py
 
-# flash_bin_confirm's HA webhook URL — same reason as
+# catalog_assistant's Homebox token + HA webhook URL — same reason as
 # label_print_service/config.py above (imported by exact filename). See
 # config.py.example for the tracked template.
-flash_bin_confirm/config.py
+catalog_assistant/config.py
 
 # Python bytecode cache — regenerated on every run, not source.
 __pycache__/

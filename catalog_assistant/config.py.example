@@ -1,0 +1,31 @@
+# Copy this file to config.py (gitignored — see ../.gitignore) and fill
+# in real values. Same credential-isolation convention as
+# label_print_service/config.py.example.
+
+# Homebox's own public URL — same one used throughout this project's
+# .local.yaml files and label_print_service/config.py.
+HOMEBOX_URL = "https://homebox.url"
+
+# Full Authorization header value, including the "Bearer " prefix.
+# Create a DEDICATED token for this tool in Homebox (Profile -> API
+# Tokens) rather than reusing Home Assistant's or label_print_service's —
+# same reasoning as label_print_service/config.py.example: keeps blast
+# radius contained and each one independently revocable. This tool
+# writes to Homebox (quantity changes, new items), so keeping its token
+# separate from HA's read-mostly one matters more here than it did for
+# label_print_service's read-only lookups.
+HOMEBOX_AUTH_HEADER = "Bearer hb_xxxxxxxxxxxxxxxx"
+
+# Full Home Assistant webhook URL, including the webhook_id
+# (automation.yaml's "homebox-highlight") — e.g.
+# "https://homeassistant.example.com/api/webhook/homebox-highlight".
+# Treat this whole URL as a secret, not just an endpoint: webhook_id is
+# effectively a shared secret (see automation.yaml's own comment on it)
+# since it's the only thing gating this endpoint when local_only: false.
+HOMEBOX_HIGHLIGHT_WEBHOOK_URL = "https://homeassistant.url/api/webhook/homebox-highlight"
+
+# Host/port app.py (the web UI) listens on — same purpose as
+# label_print_service/config.py's HOST/PORT. 0.0.0.0 so it's reachable
+# from a phone on the LAN, not just the machine it runs on.
+HOST = "0.0.0.0"
+PORT = 5152

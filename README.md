@@ -927,56 +927,110 @@ Resolved, kept as reference for anyone touching this again:
   the D610BT: correct content on the physical label, no false failure
   reported.
 
-## Flash Bin to Confirm
+## Cataloging Assistant
 
-### What it adds
+Small standalone scripts supporting a not-yet-built vision-based
+loose-parts cataloging workflow. Not part of the LED-locator pipeline
+itself, and each script here holds its own dedicated Homebox API token
+(see `config.py.example`) rather than routing through Home Assistant's —
+same reasoning as `label_print_service`'s token: contained blast radius,
+independently revocable, and this directory writes to Homebox (quantity
+changes, eventually new items), which matters more here than it did for
+`label_print_service`'s read-only lookups.
 
-A tiny standalone helper, `flash_bin_confirm/flash_bin.py`, that calls
-the existing `homebox-highlight` webhook directly with a real Homebox
-item or location UUID — the same request `testing.md` already documents
-as a manual curl bypass of the browser/nginx tap (see its "Webhook →
-Home Assistant automation logic" section), just wrapped for reuse by
-other tools instead of typed by hand. `automation.yaml` already does
-all the item → location resolution and LED math server-side, so this
-script has nothing to duplicate; it only fires the request.
+Two cases, only one built so far:
 
-Not part of the LED-locator pipeline itself — it's meant for something
-*else* that already has a Homebox UUID in hand and wants to flash that
-bin as visual confirmation. The motivating case: a not-yet-built
-vision-based parts-cataloging tool, after writing a newly identified
-part into Homebox, calling this to flash the bin it just assigned that
-part to. Useful standalone today, too — e.g. confirming a bin's wiring
-by ID without opening a browser.
+- **Restocking something already cataloged** (found more of a part you
+  already have in Homebox) — `restock_item.py`, below. No new location
+  decision needed; Homebox already has one on file.
+- **A genuinely new part** (not yet in Homebox) — not built yet. Needs a
+  location decision up front (there's nothing to look up) and a
+  create-item call this directory doesn't have yet.
 
-### Usage
+### flash_bin.py — flash a bin from a known UUID
+
+Calls the existing `homebox-highlight` webhook directly with a real
+Homebox item or location UUID — the same request `testing.md` already
+documents as a manual curl bypass of the browser/nginx tap (see its
+"Webhook → Home Assistant automation logic" section), just wrapped for
+reuse by other tools instead of typed by hand. `automation.yaml` already
+does all the item → location resolution and LED math server-side, so
+this has nothing to duplicate; it only fires the request. Useful
+standalone too — e.g. confirming a bin's wiring by ID without opening a
+browser.
 
 ```bash
-cd flash_bin_confirm
-pip install -r requirements.txt
-cp config.py.example config.py   # fill in the real webhook URL
 python flash_bin.py <a real item-or-location uuid>
 ```
 
 Or from other Python code: `from flash_bin import flash_bin;
 flash_bin(entity_id)`.
 
+### restock_item.py / app.py — bump quantity on an existing item
+
+Search Homebox by name, show every item match (never locations — those
+are filtered out) for a human to pick from, then only after explicit
+confirmation: patch the matched item's quantity and flash its existing
+bin. Deliberately never writes anything without that confirmation step —
+a wrong fuzzy-name match silently bumping the wrong item's quantity is a
+real database change, not something to risk on a guess. Homebox's search
+endpoint (`q` param — see the note on `homebox_search_entities` in
+`rest_commands.yaml`) returns every match with no server-side limit or
+pagination, so this truncates client-side at 20 shown and tells you to
+refine the search term if there's more.
+
+`app.py` is the real way to use this day to day — a small mobile-friendly
+web page (search box, tap a match, type how many you're adding, confirm)
+meant to be pulled up on a phone while standing at the shelf with the
+part in hand. `restock_item.py`'s functions (`search_items()` /
+`patch_quantity()` / `flash_bin()`) are the same ones `app.py` imports
+and calls — it's not a separate implementation, just a second front end
+(a terminal one) over the same logic, useful for scripting or a quick
+one-off without a browser open.
+
+```bash
+cd catalog_assistant
+pip install -r requirements.txt
+cp config.py.example config.py   # fill in real Homebox URL/token + webhook URL + HOST/PORT
+python app.py                    # web page at http://<this machine>:5152
+# or, from a terminal instead:
+python restock_item.py "socket head cap screw"
+```
+
 ### New files
 
-- `flash_bin_confirm/flash_bin.py` — the helper itself; `flash_bin(id)`
-  plus a CLI entry point.
-- `flash_bin_confirm/config.py.example` — tracked template for the one
-  real value this needs (the full webhook URL). Copy to `config.py`
-  (gitignored, same convention as `label_print_service/config.py`) and
-  fill in the real value — treat the whole URL as a secret, since
-  `webhook_id` is what actually gates the endpoint (see
-  `automation.yaml`'s comment on `webhook_id`).
-- `flash_bin_confirm/requirements.txt` — just `requests`.
+- `catalog_assistant/app.py` — the web page: `/` serves it,
+  `GET /search?q=` returns matches, `POST /restock` patches quantity and
+  flashes the bin. Flask dev server, same as `label_print_service/app.py`.
+- `catalog_assistant/templates/index.html` — the page itself; plain
+  HTML/CSS/JS, no build step, same style as
+  `label_print_service/templates/index.html`.
+- `catalog_assistant/flash_bin.py` — `flash_bin(id)` plus a CLI entry
+  point, used by both `restock_item.py` and `app.py`.
+- `catalog_assistant/restock_item.py` — `search_items()` /
+  `patch_quantity()` / `flash_bin()` wired into the search → confirm →
+  patch → flash flow above, plus a CLI entry point; also the module
+  `app.py` imports from.
+- `catalog_assistant/config.py.example` — tracked template for the real
+  values this needs (Homebox URL + dedicated token, the highlight webhook
+  URL, and the web page's HOST/PORT). Copy to `config.py` (gitignored,
+  same convention as `label_print_service/config.py`) and fill in real
+  values — treat the webhook URL as a secret too, since `webhook_id` is
+  what actually gates that endpoint (see `automation.yaml`'s comment on
+  `webhook_id`).
+- `catalog_assistant/requirements.txt` — `flask`, `requests`.
 
 ### Open items
 
-- [ ] Not yet called by anything real — there's no vision-cataloging
-      pipeline to call it yet. Written ahead of that so the piece exists
-      once there's a caller.
+- [ ] New-item creation (the "genuinely new part" case above) isn't
+      built — needs a create-item call against Homebox's API and a way
+      for a human to supply the target location up front, since there's
+      nothing to look up for a part Homebox has never seen.
+- [ ] `app.py` only tested against a mock Homebox/webhook server so far
+      (real request/response shapes matched what `rest_commands.yaml`
+      and `label_print_service` already confirmed against Homebox's
+      actual API), not against a real Homebox instance or from an actual
+      phone browser yet.
 
 ## Future Ideas
 
