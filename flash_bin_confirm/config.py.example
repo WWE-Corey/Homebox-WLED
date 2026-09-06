@@ -1,0 +1,11 @@
+# Copy this file to config.py (gitignored — see ../.gitignore) and fill
+# in the real value. Same credential-isolation convention as
+# label_print_service/config.py.example.
+
+# Full Home Assistant webhook URL, including the webhook_id
+# (automation.yaml's "homebox-highlight") — e.g.
+# "https://homeassistant.example.com/api/webhook/homebox-highlight".
+# Treat this whole URL as a secret, not just an endpoint: webhook_id is
+# effectively a shared secret (see automation.yaml's own comment on it)
+# since it's the only thing gating this endpoint when local_only: false.
+HOMEBOX_HIGHLIGHT_WEBHOOK_URL = "https://homeassistant.url/api/webhook/homebox-highlight"

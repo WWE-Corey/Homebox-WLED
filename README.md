@@ -927,6 +927,57 @@ Resolved, kept as reference for anyone touching this again:
   the D610BT: correct content on the physical label, no false failure
   reported.
 
+## Flash Bin to Confirm
+
+### What it adds
+
+A tiny standalone helper, `flash_bin_confirm/flash_bin.py`, that calls
+the existing `homebox-highlight` webhook directly with a real Homebox
+item or location UUID — the same request `testing.md` already documents
+as a manual curl bypass of the browser/nginx tap (see its "Webhook →
+Home Assistant automation logic" section), just wrapped for reuse by
+other tools instead of typed by hand. `automation.yaml` already does
+all the item → location resolution and LED math server-side, so this
+script has nothing to duplicate; it only fires the request.
+
+Not part of the LED-locator pipeline itself — it's meant for something
+*else* that already has a Homebox UUID in hand and wants to flash that
+bin as visual confirmation. The motivating case: a not-yet-built
+vision-based parts-cataloging tool, after writing a newly identified
+part into Homebox, calling this to flash the bin it just assigned that
+part to. Useful standalone today, too — e.g. confirming a bin's wiring
+by ID without opening a browser.
+
+### Usage
+
+```bash
+cd flash_bin_confirm
+pip install -r requirements.txt
+cp config.py.example config.py   # fill in the real webhook URL
+python flash_bin.py <a real item-or-location uuid>
+```
+
+Or from other Python code: `from flash_bin import flash_bin;
+flash_bin(entity_id)`.
+
+### New files
+
+- `flash_bin_confirm/flash_bin.py` — the helper itself; `flash_bin(id)`
+  plus a CLI entry point.
+- `flash_bin_confirm/config.py.example` — tracked template for the one
+  real value this needs (the full webhook URL). Copy to `config.py`
+  (gitignored, same convention as `label_print_service/config.py`) and
+  fill in the real value — treat the whole URL as a secret, since
+  `webhook_id` is what actually gates the endpoint (see
+  `automation.yaml`'s comment on `webhook_id`).
+- `flash_bin_confirm/requirements.txt` — just `requests`.
+
+### Open items
+
+- [ ] Not yet called by anything real — there's no vision-cataloging
+      pipeline to call it yet. Written ahead of that so the piece exists
+      once there's a caller.
+
 ## Future Ideas
 
 Not scoped or started — recorded here so the idea isn't lost, not a
