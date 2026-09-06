@@ -199,6 +199,18 @@ rest_command:
     headers:
       Authorization: !secret homebox_auth_header
 
+  # Filters items+locations by name/description substring via Homebox's own
+  # `q` query param — CONFIRMED live: `search` and `name` are silently
+  # ignored, only `q` works. Homebox also does not honor any limit/page/
+  # pageSize param on this endpoint — it always returns every match in one
+  # response (confirmed: `limit=3` still returned all 1006 entities), so
+  # callers must truncate/paginate client-side.
+  homebox_search_entities:
+    url: "http://192.168.xx.xx:7745/api/v1/entities?q={{ query | urlencode }}"
+    method: GET
+    headers:
+      Authorization: !secret homebox_auth_header
+
   # ---- Location Display (ESP32 + NV3007) ----
   # esp32_display_set_text / esp32_display_clear / esp32_display_backlight_*
   # talk to the display's own small HTTP server — same "device runs a

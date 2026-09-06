@@ -335,7 +335,13 @@ action:
           # the off_delay branch below) to save its lifespan — turn it
           # back on unconditionally here too, same "always call it, it's
           # a no-op if already on" treatment as wled_power_on.
+          # continue_on_error: true is required here, not just nice-to-have —
+          # CONFIRMED live 2026-09-05: with the display's ESP32 unreachable,
+          # this call throws and the sequence stops before ever reaching
+          # wled_clear_all/wled_set_xy below, so a real navigation resolved
+          # correctly but never lit anything.
           - service: rest_command.esp32_display_backlight_on
+            continue_on_error: true
           - delay:
               milliseconds: 300
           - service: rest_command.wled_clear_all
@@ -377,6 +383,7 @@ action:
               # BL physically rewired to a GPIO — see TFT_BL's comment
               # in homebox_display.ino; harmless no-op otherwise.
               - service: rest_command.esp32_display_backlight_off
+                continue_on_error: true
               - service: input_boolean.turn_on
                 target:
                   entity_id: input_boolean.homebox_powered_off_internal
