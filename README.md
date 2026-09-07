@@ -1079,6 +1079,18 @@ venv at `/opt/Homebox-WLED/catalog_assistant/venv`, running persistently
 via a `catalog-assistant.service` systemd unit (`Restart=always`) on
 `192.168.30.82:5152`.
 
+**Updating the deployment**: `git pull` in `/opt/Homebox-WLED` on that
+LXC, then restart `catalog-assistant.service` — `config.py` is
+gitignored so a pull never touches it. Use git for every update, not a
+manual file copy: the very first deployment placed `catalog_assistant/`
+there directly (tarball via the Proxmox host) rather than through git,
+which left that checkout untracked and 3 commits behind by the next
+update — `git pull` correctly refused to overwrite the untracked files
+rather than silently clobbering them, but it took manually diffing each
+one against `origin/main` and backing up the directory before the pull
+could proceed cleanly. Never happened again once every subsequent update
+went through git directly — keep it that way.
+
 Not reachable directly on the LAN from a phone — Homebox's VLAN (30) is
 firewalled off from other VLANs by design, and punching a new hole for
 LAN-only phone access wasn't wanted. Instead it's exposed the same way
