@@ -29,3 +29,19 @@ HOMEBOX_HIGHLIGHT_WEBHOOK_URL = "https://homeassistant.url/api/webhook/homebox-h
 # from a phone on the LAN, not just the machine it runs on.
 HOST = "0.0.0.0"
 PORT = 5152
+
+# app.py's own login gate (see its module docstring for why this exists
+# even behind a fronting SSO/reverse-proxy: that only guards a separate
+# public path in, not this app's LAN address). Generate both with
+# `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` — long
+# and random, not a memorable password: this is typed rarely (the
+# session lasts 30 days) and, unlike a login a human picks, needs to
+# resist brute-forcing from anything else already on the same LAN
+# segment, not just guessing.
+#
+# APP_SECRET is the password itself, checked against what's typed into
+# the login form. FLASK_SESSION_KEY is unrelated — it signs the session
+# cookie after a successful login, so use a second, independently
+# generated value rather than reusing APP_SECRET for both.
+APP_SECRET = "generate-with-secrets.token_urlsafe-see-comment"
+FLASK_SESSION_KEY = "generate-a-second-independent-value-the-same-way"

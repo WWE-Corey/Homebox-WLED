@@ -6,23 +6,72 @@ at the shelf with a part in hand, not typed at a terminal. Same
 
 Reuses restock_item.py's Homebox calls directly rather than duplicating
 them; this file only adds the web layer around them.
+
+Gates every route behind a shared-secret login (config.APP_SECRET) --
+this app writes to Homebox (quantity, bin-flash) and was found to be
+reachable completely unauthenticated by anything else on the same LAN
+segment as deployed (a fronting reverse-proxy/SSO layer only guards a
+separate public path in, not this app's own LAN address -- see
+../README.md's Cataloging Assistant -> Security note / Open Items for
+the full story). This check exists independent of network topology so
+it holds regardless of how or where this gets deployed next.
 """
+
+from datetime import timedelta
+from functools import wraps
 
 import config
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 from restock_item import MAX_SHOWN, flash_bin, patch_quantity, search_items
 
 app = Flask(__name__)
+app.secret_key = config.FLASK_SESSION_KEY
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("authenticated"):
+            if request.path == "/" or request.path == "/login":
+                return redirect(url_for("login", next=request.path))
+            # /search, /restock -- called by the page's own JS, not a
+            # browser navigation, so redirecting would just confuse a
+            # fetch() call. A plain 401 is what the frontend can act on.
+            return jsonify({"error": "not authenticated"}), 401
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("secret") == config.APP_SECRET:
+            session.permanent = True
+            session["authenticated"] = True
+            return redirect(request.args.get("next") or url_for("index"))
+        error = "Incorrect password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
 
 @app.route("/search")
+@login_required
 def search_route():
     query = request.args.get("q", "").strip()
     if not query:
@@ -35,6 +84,7 @@ def search_route():
 
 
 @app.route("/restock", methods=["POST"])
+@login_required
 def restock_route():
     body = request.get_json(force=True, silent=True) or {}
     item_id = body.get("item_id")

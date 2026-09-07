@@ -1001,10 +1001,14 @@ python restock_item.py "socket head cap screw"
 
 - `catalog_assistant/app.py` — the web page: `/` serves it,
   `GET /search?q=` returns matches, `POST /restock` patches quantity and
-  flashes the bin. Flask dev server, same as `label_print_service/app.py`.
+  flashes the bin, `/login`+`/logout` handle the shared-secret gate (see
+  Security note below) in front of all of them. Flask dev server, same
+  as `label_print_service/app.py`.
 - `catalog_assistant/templates/index.html` — the page itself; plain
   HTML/CSS/JS, no build step, same style as
   `label_print_service/templates/index.html`.
+- `catalog_assistant/templates/login.html` — the password form shown
+  when not yet authenticated.
 - `catalog_assistant/flash_bin.py` — `flash_bin(id)` plus a CLI entry
   point, used by both `restock_item.py` and `app.py`.
 - `catalog_assistant/restock_item.py` — `search_items()` /
@@ -1013,12 +1017,78 @@ python restock_item.py "socket head cap screw"
   `app.py` imports from.
 - `catalog_assistant/config.py.example` — tracked template for the real
   values this needs (Homebox URL + dedicated token, the highlight webhook
-  URL, and the web page's HOST/PORT). Copy to `config.py` (gitignored,
-  same convention as `label_print_service/config.py`) and fill in real
-  values — treat the webhook URL as a secret too, since `webhook_id` is
-  what actually gates that endpoint (see `automation.yaml`'s comment on
-  `webhook_id`).
+  URL, the web page's HOST/PORT, and `APP_SECRET`/`FLASK_SESSION_KEY` for
+  the login gate — generate both with
+  `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`, long
+  and random rather than memorable, since this needs to resist
+  brute-forcing from anything else on the LAN, not just guessing). Copy
+  to `config.py` (gitignored, same convention as
+  `label_print_service/config.py`) and fill in real values — treat the
+  webhook URL as a secret too, since `webhook_id` is what actually gates
+  that endpoint (see `automation.yaml`'s comment on `webhook_id`).
 - `catalog_assistant/requirements.txt` — `flask`, `requests`.
+
+### Security note: it writes to Homebox, treat it accordingly
+
+`POST /restock` changes an item's quantity and triggers a bin flash —
+real writes, not read-only. `app.py` gates every route behind a
+shared-secret login (`config.APP_SECRET`, see New files above), added
+after this was found reachable completely unauthenticated on its
+original deployment (see Deployment below for the full story — a
+fronting reverse-proxy/SSO layer only guarded a separate public path in,
+not this app's own LAN address). Don't treat network placement alone as
+sufficient access control for this app; the login gate is there
+specifically because it wasn't.
+
+### Deployment (LXC 107 "homebox", Proxmox node rufus)
+
+Runs alongside Homebox itself, not on a separate machine — Debian 13
+LXC, Python 3.13.5 + venv (no Docker on this LXC, installed cleanly),
+venv at `/opt/Homebox-WLED/catalog_assistant/venv`, running persistently
+via a `catalog-assistant.service` systemd unit (`Restart=always`) on
+`192.168.30.82:5152`.
+
+Not reachable directly on the LAN from a phone — Homebox's VLAN (30) is
+firewalled off from other VLANs by design, and punching a new hole for
+LAN-only phone access wasn't wanted. Instead it's exposed the same way
+`home.wwolf.us` itself is: a public hostname, `restock.wwolf.us`, gated
+behind Authentik's forward-auth (Proxy Provider + embedded outpost) —
+real login required before anything reaches the Flask app *via that
+hostname*. No code changes were needed for this — auth is entirely at
+the proxy, transparent to `app.py`/`restock_item.py`/the templates.
+
+**This only closes the internet-facing path, not the LAN one — confirmed
+live, not assumed.** pfSense/Authentik only see traffic that routes
+*between* VLANs; two devices already on the same VLAN reach each other
+by straight L2 switching, which never touches that firewall or the
+outpost. VLAN 30 has no switch-level port isolation applied, and Flask
+binds `0.0.0.0:5152`, not `127.0.0.1`. Confirmed by curling
+`192.168.30.82:5152` directly from another VLAN-30 device (a different
+LXC on a different Proxmox node): clean `200`, no auth, straight to
+`/restock`. **Fixed at two independent layers** (belt and suspenders,
+not redundant — either alone would have closed this):
+
+1. **Host firewall** (network layer): an `nftables` rule on the LXC
+   itself (persistent, `/etc/nftables.conf`) restricts inbound 5152 to
+   only `127.0.0.1` and the Authentik outpost's real IP
+   (`192.168.20.98`). Verified: a VLAN-30 host gets connection-refused
+   hitting `192.168.30.82:5152` directly now; the real path through
+   `restock.wwolf.us` and local health checks both still work; Homebox's
+   own port 7745 is untouched.
+2. **App-level login** (code layer, independent of network path): every
+   route requires a shared-secret login (`config.APP_SECRET`,
+   session-cookie-backed, 30-day lifetime) — see `app.py`'s module
+   docstring. Holds even if the LXC is ever redeployed somewhere the
+   firewall rule doesn't follow, or moved off this VLAN entirely.
+
+**Gotcha found deploying this**: the Authentik outpost sits on a
+different VLAN (20) than Homebox (30), and VLAN 20's firewall only
+permits specific ports outbound via an alias
+(`Allowed_OUT_Ports_LAN`) — port 5152 wasn't in it, which produced a
+bad-gateway error *after* a successful login until the alias was
+updated. If this app's port ever changes, that firewall alias needs
+updating too, or logins will succeed but the app will still be
+unreachable.
 
 ### Open items
 
@@ -1026,11 +1096,6 @@ python restock_item.py "socket head cap screw"
       built — needs a create-item call against Homebox's API and a way
       for a human to supply the target location up front, since there's
       nothing to look up for a part Homebox has never seen.
-- [ ] `app.py` only tested against a mock Homebox/webhook server so far
-      (real request/response shapes matched what `rest_commands.yaml`
-      and `label_print_service` already confirmed against Homebox's
-      actual API), not against a real Homebox instance or from an actual
-      phone browser yet.
 
 ## Future Ideas
 

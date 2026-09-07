@@ -8,6 +8,8 @@
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
   h1 { font-size: 1.3rem; margin-bottom: 0.75rem; }
   #topBar { position: sticky; top: 0; background: white; z-index: 10; padding-top: 0.5rem; padding-bottom: 0.75rem; }
+  #titleRow { display: flex; justify-content: space-between; align-items: center; }
+  #logoutBtn { font-size: 0.8rem; padding: 0.3rem 0.6rem; cursor: pointer; }
   #search { width: 100%; padding: 0.6rem; font-size: 1.1rem; box-sizing: border-box; }
   .item-row { border-bottom: 1px solid #ddd; padding: 0.6rem 0; }
   .item-info { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
@@ -29,7 +31,10 @@
 <body>
 
 <div id="topBar">
-  <h1>Restock an Item</h1>
+  <div id="titleRow">
+    <h1>Restock an Item</h1>
+    <form method="POST" action="/logout"><button id="logoutBtn" type="submit">Log out</button></form>
+  </div>
   <input type="text" id="search" placeholder="Search by part name..." autofocus>
 </div>
 <div id="results"></div>
