@@ -938,14 +938,14 @@ independently revocable, and this directory writes to Homebox (quantity
 changes, eventually new items), which matters more here than it did for
 `label_print_service`'s read-only lookups.
 
-Two cases, only one built so far:
+Two cases, both built:
 
 - **Restocking something already cataloged** (found more of a part you
   already have in Homebox) — `restock_item.py`, below. No new location
   decision needed; Homebox already has one on file.
-- **A genuinely new part** (not yet in Homebox) — not built yet. Needs a
-  location decision up front (there's nothing to look up) and a
-  create-item call this directory doesn't have yet.
+- **A genuinely new part** (not yet in Homebox) — `create_item.py`,
+  below. Needs a location decision up front, since there's nothing to
+  look up for a part Homebox has never seen.
 
 ### flash_bin.py — flash a bin from a known UUID
 
@@ -997,11 +997,37 @@ python app.py                    # web page at http://<this machine>:5152
 python restock_item.py "socket head cap screw"
 ```
 
+### create_item.py / app.py — catalog a brand new item
+
+`app.py`'s "New Item" tab: search for the target *location* (not an
+item — there's nothing to look up for a part Homebox has never seen),
+pick one, then fill in name/description/quantity and confirm. Creates
+the item nested directly under that location and flashes its bin.
+`create_item.py` has the same terminal alternative as `restock_item.py`:
+
+```bash
+python create_item.py "some bin or location name"
+```
+
+Confirmed against Homebox's real API before building this (not guessed
+from reading its source): `POST /api/v1/entities` needs only `name` —
+`entityTypeId` (which distinguishes an item from a location) defaults to
+the Item type if omitted, confirmed via a validation-only probe that
+named exactly `Name` as the missing field and nothing else. This code
+resolves and sends `entityTypeId` explicitly anyway (`GET
+/api/v1/entity-types`, cheap, fetched fresh each call rather than
+hardcoded) rather than relying on that silent default. `parentId` set to a
+location's id correctly nests the new item directly under it — verified
+by creating a real, clearly-named test item, confirming its `parent` in
+the response, then deleting it (`DELETE /api/v1/entities/{id}`,
+confirmed 404 afterward).
+
 ### New files
 
-- `catalog_assistant/app.py` — the web page: `/` serves it,
-  `GET /search?q=` returns matches, `POST /restock` patches quantity and
-  flashes the bin, `/login`+`/logout` handle the shared-secret gate (see
+- `catalog_assistant/app.py` — the web page: `/` serves it (two tabs,
+  Restock Existing / New Item), `GET /search?q=` + `POST /restock` back
+  the first tab, `GET /search_locations?q=` + `POST /create_item` back
+  the second, `/login`+`/logout` handle the shared-secret gate (see
   Security note below) in front of all of them. Flask dev server, same
   as `label_print_service/app.py`.
 - `catalog_assistant/templates/index.html` — the page itself; plain
@@ -1010,11 +1036,16 @@ python restock_item.py "socket head cap screw"
 - `catalog_assistant/templates/login.html` — the password form shown
   when not yet authenticated.
 - `catalog_assistant/flash_bin.py` — `flash_bin(id)` plus a CLI entry
-  point, used by both `restock_item.py` and `app.py`.
+  point, used by `restock_item.py`, `create_item.py`, and `app.py` (all
+  three import it rather than each defining their own copy).
 - `catalog_assistant/restock_item.py` — `search_items()` /
-  `patch_quantity()` / `flash_bin()` wired into the search → confirm →
-  patch → flash flow above, plus a CLI entry point; also the module
-  `app.py` imports from.
+  `patch_quantity()` wired into the search → confirm → patch → flash
+  flow above, plus a CLI entry point; also the module `app.py` imports
+  from for the Restock tab.
+- `catalog_assistant/create_item.py` — `search_locations()` /
+  `get_item_entity_type_id()` / `create_item()` wired into the New Item
+  flow above, plus a CLI entry point; also the module `app.py` imports
+  from for the New Item tab.
 - `catalog_assistant/config.py.example` — tracked template for the real
   values this needs (Homebox URL + dedicated token, the highlight webhook
   URL, the web page's HOST/PORT, and `APP_SECRET`/`FLASK_SESSION_KEY` for
@@ -1092,10 +1123,11 @@ unreachable.
 
 ### Open items
 
-- [ ] New-item creation (the "genuinely new part" case above) isn't
-      built — needs a create-item call against Homebox's API and a way
-      for a human to supply the target location up front, since there's
-      nothing to look up for a part Homebox has never seen.
+- [ ] `create_item.py`/the New Item tab is built and tested against a
+      mock server plus one real, cleaned-up test creation against
+      Homebox's live API (see create_item.py's section above) — not yet
+      deployed to the LXC (`git pull` + restart the systemd unit once
+      ready).
 
 ## Future Ideas
 

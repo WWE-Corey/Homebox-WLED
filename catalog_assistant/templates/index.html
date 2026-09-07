@@ -10,7 +10,14 @@
   #topBar { position: sticky; top: 0; background: white; z-index: 10; padding-top: 0.5rem; padding-bottom: 0.75rem; }
   #titleRow { display: flex; justify-content: space-between; align-items: center; }
   #logoutBtn { font-size: 0.8rem; padding: 0.3rem 0.6rem; cursor: pointer; }
-  #search { width: 100%; padding: 0.6rem; font-size: 1.1rem; box-sizing: border-box; }
+  #tabs { display: flex; gap: 0.5rem; margin: 0.5rem 0; }
+  .tab-btn { flex: 1; padding: 0.5rem; font-size: 0.95rem; cursor: pointer; background: #eee; border: 1px solid #ccc; border-radius: 6px; }
+  .tab-btn.active { background: #222; color: white; border-color: #222; }
+  #search, #locationSearch, .field-input { width: 100%; padding: 0.6rem; font-size: 1.1rem; box-sizing: border-box; }
+  .field-row { margin: 0.6rem 0; }
+  .field-row label { display: block; font-size: 0.85rem; color: #555; margin-bottom: 0.2rem; }
+  .selected-location { padding: 0.6rem; background: #f5f5f5; border-radius: 6px; margin-bottom: 0.6rem; display: flex; justify-content: space-between; align-items: center; }
+  .change-link { font-size: 0.85rem; cursor: pointer; text-decoration: underline; color: #555; background: none; border: none; }
   .item-row { border-bottom: 1px solid #ddd; padding: 0.6rem 0; }
   .item-info { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
   .item-name { font-weight: 600; }
@@ -32,12 +39,44 @@
 
 <div id="topBar">
   <div id="titleRow">
-    <h1>Restock an Item</h1>
+    <h1>Homebox Catalog Assistant</h1>
     <form method="POST" action="/logout"><button id="logoutBtn" type="submit">Log out</button></form>
   </div>
+  <div id="tabs">
+    <button class="tab-btn active" id="restockTabBtn">Restock Existing</button>
+    <button class="tab-btn" id="newItemTabBtn">New Item</button>
+  </div>
   <input type="text" id="search" placeholder="Search by part name..." autofocus>
+  <input type="text" id="locationSearch" placeholder="Search by location..." hidden>
 </div>
-<div id="results"></div>
+
+<div id="restockPanel">
+  <div id="results"></div>
+</div>
+
+<div id="newItemPanel" hidden>
+  <div id="locationResults"></div>
+  <div id="newItemForm" hidden>
+    <div class="selected-location">
+      <span id="selectedLocationName"></span>
+      <button class="change-link" id="changeLocationBtn">change</button>
+    </div>
+    <div class="field-row">
+      <label for="newItemName">Name</label>
+      <input type="text" id="newItemName" class="field-input" placeholder="Part name">
+    </div>
+    <div class="field-row">
+      <label for="newItemDescription">Description (optional)</label>
+      <input type="text" id="newItemDescription" class="field-input">
+    </div>
+    <div class="field-row">
+      <label for="newItemQuantity">Quantity</label>
+      <input type="number" id="newItemQuantity" class="field-input" value="1" min="1">
+    </div>
+    <button class="confirm-btn" id="createItemBtn">Create &amp; Flash</button>
+  </div>
+</div>
+
 <div id="status"></div>
 
 <script>
@@ -165,6 +204,158 @@ function escapeHtml(s) {
   div.textContent = s;
   return div.innerHTML;
 }
+
+// ---- Tabs ----
+
+const restockTabBtn = document.getElementById('restockTabBtn');
+const newItemTabBtn = document.getElementById('newItemTabBtn');
+const restockPanel = document.getElementById('restockPanel');
+const newItemPanel = document.getElementById('newItemPanel');
+const locationSearchInput = document.getElementById('locationSearch');
+
+restockTabBtn.addEventListener('click', () => {
+  restockTabBtn.classList.add('active');
+  newItemTabBtn.classList.remove('active');
+  restockPanel.hidden = false;
+  newItemPanel.hidden = true;
+  searchInput.hidden = false;
+  locationSearchInput.hidden = true;
+  statusEl.textContent = '';
+});
+
+newItemTabBtn.addEventListener('click', () => {
+  newItemTabBtn.classList.add('active');
+  restockTabBtn.classList.remove('active');
+  newItemPanel.hidden = false;
+  restockPanel.hidden = true;
+  locationSearchInput.hidden = false;
+  searchInput.hidden = true;
+  statusEl.textContent = '';
+});
+
+// ---- New Item tab ----
+
+let locationDebounceTimer = null;
+let selectedLocation = null;
+
+const locationResultsEl = document.getElementById('locationResults');
+const newItemFormEl = document.getElementById('newItemForm');
+const selectedLocationNameEl = document.getElementById('selectedLocationName');
+const newItemNameInput = document.getElementById('newItemName');
+const newItemDescriptionInput = document.getElementById('newItemDescription');
+const newItemQuantityInput = document.getElementById('newItemQuantity');
+const createItemBtn = document.getElementById('createItemBtn');
+
+locationSearchInput.addEventListener('input', () => {
+  clearTimeout(locationDebounceTimer);
+  const q = locationSearchInput.value.trim();
+  if (!q) { locationResultsEl.innerHTML = ''; return; }
+  locationDebounceTimer = setTimeout(() => doLocationSearch(q), 300);
+});
+
+async function doLocationSearch(q) {
+  locationResultsEl.innerHTML = '<p>Searching&hellip;</p>';
+  try {
+    const resp = await fetch('/search_locations?q=' + encodeURIComponent(q));
+    const data = await resp.json();
+    if (data.error) {
+      locationResultsEl.innerHTML = '<p class="note">Error: ' + escapeHtml(data.error) + '</p>';
+      return;
+    }
+    renderLocationResults(data.locations, data.total);
+  } catch (err) {
+    locationResultsEl.innerHTML = '<p class="note">Request failed: ' + escapeHtml(String(err)) + '</p>';
+  }
+}
+
+function renderLocationResults(locations, total) {
+  locationResultsEl.innerHTML = '';
+  if (locations.length === 0) {
+    locationResultsEl.innerHTML = '<p>No matches.</p>';
+    return;
+  }
+  for (const loc of locations) {
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.innerHTML =
+      '<div class="item-info">' +
+        '<div class="item-name">' + escapeHtml(loc.name) + '</div>' +
+        '<button class="restock-btn">Select</button>' +
+      '</div>';
+    row.querySelector('.restock-btn').addEventListener('click', () => selectLocation(loc));
+    locationResultsEl.appendChild(row);
+  }
+  if (total > locations.length) {
+    const note = document.createElement('p');
+    note.className = 'note';
+    note.textContent = (total - locations.length) + ' more match(es) not shown — refine your search.';
+    locationResultsEl.appendChild(note);
+  }
+}
+
+function selectLocation(loc) {
+  selectedLocation = loc;
+  selectedLocationNameEl.textContent = loc.name;
+  locationSearchInput.hidden = true;
+  locationResultsEl.hidden = true;
+  newItemFormEl.hidden = false;
+  newItemNameInput.focus();
+}
+
+document.getElementById('changeLocationBtn').addEventListener('click', () => {
+  selectedLocation = null;
+  newItemFormEl.hidden = true;
+  locationSearchInput.hidden = false;
+  locationResultsEl.hidden = false;
+  locationSearchInput.value = '';
+  locationResultsEl.innerHTML = '';
+  locationSearchInput.focus();
+});
+
+createItemBtn.addEventListener('click', async () => {
+  const name = newItemNameInput.value.trim();
+  if (!name) {
+    statusEl.className = 'error';
+    statusEl.textContent = 'Name is required.';
+    return;
+  }
+  const description = newItemDescriptionInput.value.trim();
+  const quantity = parseInt(newItemQuantityInput.value, 10) || 1;
+
+  createItemBtn.disabled = true;
+  statusEl.className = '';
+  statusEl.textContent = 'Creating ' + name + '...';
+
+  try {
+    const resp = await fetch('/create_item', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        description: description,
+        quantity: quantity,
+        location_id: selectedLocation.id,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      statusEl.className = 'error';
+      statusEl.textContent = 'Error: ' + (data.error || resp.statusText);
+    } else {
+      statusEl.className = 'ok';
+      statusEl.textContent = 'Done — created ' + name + ' (qty ' + quantity + ') in ' +
+        selectedLocation.name + '. Bin flashed: go put it there.';
+      newItemNameInput.value = '';
+      newItemDescriptionInput.value = '';
+      newItemQuantityInput.value = '1';
+    }
+  } catch (err) {
+    statusEl.className = 'error';
+    statusEl.textContent = 'Request failed: ' + err;
+  } finally {
+    createItemBtn.disabled = false;
+  }
+});
 </script>
 </body>
 </html>

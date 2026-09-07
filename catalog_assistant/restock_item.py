@@ -15,6 +15,8 @@ import sys
 import config
 import requests
 
+from flash_bin import flash_bin
+
 
 def _auth_headers():
     return {"Authorization": config.HOMEBOX_AUTH_HEADER}
@@ -68,14 +70,6 @@ def patch_quantity(entity_id, quantity, timeout=10):
     )
     resp.raise_for_status()
 
-
-def flash_bin(entity_id, timeout=10):
-    resp = requests.post(
-        config.HOMEBOX_HIGHLIGHT_WEBHOOK_URL,
-        json={"id": entity_id},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
 
 
 MAX_SHOWN = 20

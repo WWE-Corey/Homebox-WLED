@@ -24,6 +24,7 @@ import config
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
+from create_item import create_item, search_locations
 from restock_item import MAX_SHOWN, flash_bin, patch_quantity, search_items
 
 app = Flask(__name__)
@@ -95,6 +96,39 @@ def restock_route():
     try:
         patch_quantity(item_id, new_quantity)
         flash_bin(item_id)
+    except requests.RequestException as e:
+        return jsonify({"error": str(e)}), 502
+
+    return jsonify({"ok": True})
+
+
+@app.route("/search_locations")
+@login_required
+def search_locations_route():
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"locations": [], "total": 0})
+    try:
+        locations = search_locations(query)
+    except requests.RequestException as e:
+        return jsonify({"error": str(e)}), 502
+    return jsonify({"locations": locations[:MAX_SHOWN], "total": len(locations)})
+
+
+@app.route("/create_item", methods=["POST"])
+@login_required
+def create_item_route():
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    location_id = body.get("location_id")
+    description = (body.get("description") or "").strip()
+    quantity = body.get("quantity", 1)
+    if not name or not location_id:
+        return jsonify({"error": "name and location_id are required"}), 400
+
+    try:
+        created = create_item(name, location_id, description=description, quantity=quantity)
+        flash_bin(created["id"])
     except requests.RequestException as e:
         return jsonify({"error": str(e)}), 502
 
