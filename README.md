@@ -1022,6 +1022,54 @@ by creating a real, clearly-named test item, confirming its `parent` in
 the response, then deleting it (`DELETE /api/v1/entities/{id}`,
 confirmed 404 afterward).
 
+**Gotcha: model number/manufacturer/price need a follow-up PUT, and
+PATCH on this same path silently doesn't work for them.** `POST`'s
+create struct has no purchase-price field at all, and a `modelNumber`
+sent at create time is silently dropped (confirmed live: came back
+empty on a real created item, not just absent from one response).
+`PATCH /api/v1/entities/{id}` looks like the obvious follow-up — it's
+what `restock_item.py`'s quantity patch already uses successfully — but
+it's actually a narrow, separate handler (`EntityPatch`, confirmed via
+Homebox's Go source) that only ever touches
+`quantity`/`parentId`/`entityTypeId`/`tagIds`/`importRef`. A `PATCH`
+with `{"purchasePrice": ...}` returns `200` and silently changes
+nothing — confirmed live, which is what sent this to the source in the
+first place. The real follow-up is `PUT` (`EntityUpdate`), and it's a
+genuine full replace: every field the item should keep has to be resent
+on every call, since `EntityUpdate`'s handler does no merging, and
+critically **omitting `parentId` doesn't leave it alone — it clears the
+item's location** (`else { ClearParent() }` in Homebox's own update
+code). `set_full_details()` mirrors `create_item()`'s inputs for exactly
+this reason: not because PUT needs more information than POST, but
+because it needs everything resent alongside whatever's actually
+changing.
+
+### import_parts() — cataloging several parts from one receipt/order
+
+Not wired into the UI yet, but used directly (see git history) to
+catalog a real DigiKey order confirmation PDF: `import_parts(location_id,
+parts)` creates several items in the same location at once, the shape a
+vendor order confirmation naturally comes in (name, description,
+quantity, price, a part number, and often a product photo already
+sitting right there in the document — nothing left to look up except
+which bin they all go in). Each item is independently re-verified after
+creation (name/quantity/modelNumber/purchasePrice/parent all checked
+against what was sent) rather than trusting `PUT`'s 200 alone, precisely
+because this project already found one endpoint that returned success
+while silently changing nothing.
+
+`attach_photo(entity_id, image_path)` uploads a local image file as an
+item's primary photo (`POST /api/v1/entities/{id}/attachments`,
+multipart fields `file`/`name`/`type`/`primary` — taken from Homebox's
+actual handler source, then verified with a real upload). For a receipt
+PDF specifically, the product photos are already embedded in the file
+and extractable directly with `pdfimages -all` (poppler-utils) — no
+need to source stock photos separately. `import_parts()` takes an
+optional `image_path` per part and calls this automatically; a photo
+upload failure doesn't invalidate an otherwise-correctly-created item
+(`ok` in the result), since a missing picture is a much smaller problem
+than wrong data.
+
 ### New files
 
 - `catalog_assistant/app.py` — the web page: `/` serves it (two tabs,
