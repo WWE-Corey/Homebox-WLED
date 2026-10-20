@@ -1139,6 +1139,20 @@ one against `origin/main` and backing up the directory before the pull
 could proceed cleanly. Never happened again once every subsequent update
 went through git directly — keep it that way.
 
+**Homebox itself** is a bare binary at `/opt/homebox` (`homebox.service`,
+SQLite in `/opt/homebox/.data`), not Docker. Upgraded 0.26.2 → 0.27.0 on
+2026-10-20 by hand rather than via the community-scripts `update` helper
+(which does a clean reinstall of `/opt/homebox`): stop the service, copy
+`/opt/homebox` aside, verify the release tarball against `checksums.txt`,
+replace only the `homebox` binary, start — migrations run on boot. Daily
+PBS3 backup of CT 107 is the rollback path. Homebox 0.27 notes that touch
+this repo: API keys created *without* an explicit `expiresAt` now expire
+after 30 days (the live keys predate that and never expire; the
+`home-assistant` key was minted 2026-10-20 with a 1-year expiry — **renew
+by 2027-10-20**, in both HA's `secrets.yaml` `homebox_auth_header` and
+`/config/homebox_auth_header.txt`); `q=` search is tokenized (every word
+must match); the list endpoint returns `parent`, never `location`.
+
 Not reachable directly on the LAN from a phone — Homebox's VLAN (30) is
 firewalled off from other VLANs by design, and punching a new hole for
 LAN-only phone access wasn't wanted. Instead it's exposed the same way

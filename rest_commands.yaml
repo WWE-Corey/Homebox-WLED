@@ -201,10 +201,13 @@ rest_command:
 
   # Filters items+locations by name/description substring via Homebox's own
   # `q` query param — CONFIRMED live: `search` and `name` are silently
-  # ignored, only `q` works. Homebox also does not honor any limit/page/
-  # pageSize param on this endpoint — it always returns every match in one
-  # response (confirmed: `limit=3` still returned all 1006 entities), so
-  # callers must truncate/paginate client-side.
+  # ignored, only `q` works. With no paging params Homebox returns every
+  # match in one response (`limit=3` is ignored and still returned all
+  # 1006 entities), but `page`+`pageSize` ARE honored (confirmed live on
+  # 0.26.2: `pageSize=3&page=1` returned 3 items with total 43). Since
+  # v0.27 `q` is tokenized: every whitespace-separated word must match
+  # (name, description, tags, custom fields, etc.), `"quoted phrases"`
+  # stay together, and at most 8 words are used.
   homebox_search_entities:
     url: "http://192.168.xx.xx:7745/api/v1/entities?q={{ query | urlencode }}"
     method: GET

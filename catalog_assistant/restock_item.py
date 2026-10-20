@@ -27,8 +27,10 @@ def search_items(query, timeout=10):
     substring match via Homebox's own `q` param — confirmed live that
     `search`/`name` are silently ignored and only `q` works (see
     rest_commands.yaml's homebox_search_entities comment). Homebox
-    doesn't honor limit/page params on this endpoint either, so this
-    always gets every match back and filters/truncates client-side.
+    ignores `limit`; this omits page/pageSize so it always gets every
+    match back and filters/truncates client-side (`pageSize` itself is
+    honored, just not needed here). Since Homebox v0.27 every
+    whitespace-separated word in `query` must match.
     """
     resp = requests.get(
         f"{config.HOMEBOX_URL}/api/v1/entities",
@@ -48,7 +50,11 @@ def search_items(query, timeout=10):
         is_location = (entity.get("entityType") or {}).get("isLocation", False)
         if is_location:
             continue
-        location = entity.get("location") or {}
+        # The list endpoint's EntitySummary carries `parent` only; the
+        # resolved `location` field exists just on GET /entities/{id}
+        # (confirmed live on 0.26.2 and 0.27.0). For an item stored
+        # directly in a bin, parent IS its location.
+        location = entity.get("parent") or {}
         items.append(
             {
                 "id": entity["id"],
