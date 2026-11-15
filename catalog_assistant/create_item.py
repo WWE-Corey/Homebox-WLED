@@ -150,8 +150,10 @@ def set_full_details(
     return resp.json()
 
 
-def attach_photo(entity_id, image_path, title=None, timeout=15):
-    """Uploads a local image file as the entity's primary photo. Confirmed
+def attach_photo(entity_id, image_path, title=None, primary=True, timeout=15):
+    """Uploads a local image file as a photo on the entity -- the primary
+    one by default; pass primary=False for extras (e.g. a dimensions
+    diagram) that shouldn't replace the main picture. Confirmed
     live against the real API before relying on it: multipart fields are
     `file` (the bytes), `name` (title shown in Homebox), `type` ("photo"),
     and `primary` ("true"/"false") -- field names taken from Homebox's
@@ -160,7 +162,7 @@ def attach_photo(entity_id, image_path, title=None, timeout=15):
     title = title or image_path.rsplit("/", 1)[-1]
     with open(image_path, "rb") as f:
         files = {"file": (title, f, "image/jpeg")}
-        data = {"name": title, "type": "photo", "primary": "true"}
+        data = {"name": title, "type": "photo", "primary": "true" if primary else "false"}
         resp = requests.post(
             f"{config.HOMEBOX_URL}/api/v1/entities/{entity_id}/attachments",
             headers=_auth_headers(),
@@ -182,7 +184,7 @@ def import_parts(location_id, parts, timeout=10):
 
     `parts` is a list of dicts: {name, description="", quantity=1,
     model_number="", manufacturer="", purchase_price=None,
-    image_path=None}. Returns a list of {name, id, ok, quantity,
+    image_path=None, extra_image_paths=[]}. Returns a list of {name, id, ok, quantity,
     purchase_price} -- `ok` is a same-call verification (re-fetches each
     created item and checks name/quantity/modelNumber/purchasePrice/
     parent all match what was sent) rather than trusting the write
@@ -201,6 +203,7 @@ def import_parts(location_id, parts, timeout=10):
         manufacturer = part.get("manufacturer", "")
         purchase_price = part.get("purchase_price")
         image_path = part.get("image_path")
+        extra_images = part.get("extra_image_paths", [])
 
         created = create_item(name, location_id, description=description, quantity=quantity, timeout=timeout)
         set_full_details(
@@ -216,6 +219,8 @@ def import_parts(location_id, parts, timeout=10):
         )
         if image_path:
             attach_photo(created["id"], image_path, title=f"{name}.jpg", timeout=timeout)
+        for n, extra in enumerate(extra_images, 2):
+            attach_photo(created["id"], extra, title=f"{name} ({n}).jpg", primary=False, timeout=timeout)
 
         resp = requests.get(
             f"{config.HOMEBOX_URL}/api/v1/entities/{created['id']}",
