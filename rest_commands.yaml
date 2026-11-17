@@ -178,6 +178,72 @@ rest_command:
     content_type: "application/json"
     payload: '{"on":false}'
 
+  # ---- Second WLED controller: bin sets J, K, L (separate wall) ----
+  # A different physical controller (its own IP, its own segment IDs
+  # starting back at 0) because that wall is too far to wire from the
+  # A-I controller above. Same command set and same payload conventions
+  # as the A-I commands (explicit per-index clear, "frz":false on
+  # breathe, etc. — see the comments there for why), just 6 segments
+  # instead of 18: one Y-axis segment per bin set (IDs 0-2 = J, K, L)
+  # and one X-axis segment per bin set (IDs 3-5 = J, K, L). Replace the
+  # placeholder IP with the new controller's address. See
+  # jkl-create-segments.sh and README's "Bin sets J, K, L" section.
+  #
+  # LEDs per set (Y rows + X columns): J 6+6=12, K 8+6=14, L 8+6=14 — 40 total.
+  wled_jkl_power_on:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: '{"on":true}'
+
+  wled_jkl_clear_all:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    # Explicit per-index pairs, not range-fill — same confirmed WLED
+    # quirk as wled_clear_all above.
+    payload: >-
+      {"seg":[
+      {"id":0,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000"]},
+      {"id":1,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":2,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000",6,"000000",7,"000000"]},
+      {"id":3,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000"]},
+      {"id":4,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000"]},
+      {"id":5,"fx":0,"i":[0,"000000",1,"000000",2,"000000",3,"000000",4,"000000",5,"000000"]}
+      ]}
+
+  # Same shape as wled_set_xy — y_seg_id/x_seg_id are this controller's
+  # own segment IDs (0-5), not the A-I controller's.
+  wled_jkl_set_xy:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {"seg":[
+      {"id":{{ y_seg_id }},"i":[{{ y_index }},"{{ color }}"]},
+      {"id":{{ x_seg_id }},"i":[{% for x in x_indices %}{% if not loop.first %},{% endif %}{{ x }},"{{ color }}"{% endfor %}]}
+      ]}
+
+  wled_jkl_start_breathe:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: >-
+      {"on":true,"seg":[
+      {"id":0,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":1,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":2,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":3,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":4,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]},
+      {"id":5,"frz":false,"fx":2,"sx":{{ breathe_sx }},"col":[[{{ r }},{{ g }},{{ b }}]]}
+      ]}
+
+  wled_jkl_power_off:
+    url: "http://192.168.xx.xx/json/state"
+    method: POST
+    content_type: "application/json"
+    payload: '{"on":false}'
+
   # Deliberately hits Homebox's backend directly via its LAN address —
   # 7745, not the public homebox.url domain. HA is on the same LAN as
   # Homebox and has no need to round-trip through HAProxy/the nginx tap

@@ -64,6 +64,8 @@ action:
       # same "separate automation, own small resolution" tradeoff
       # already made for display_automation.yaml.
       - service: rest_command.wled_clear_all
+      - service: rest_command.wled_jkl_clear_all
+        continue_on_error: true
       - variables:
           color_map:
             Red: "FF0000"
@@ -80,6 +82,13 @@ action:
                 highlight_color[2:4] | int(0, 16),
                 highlight_color[4:6] | int(0, 16)] }}
       - service: rest_command.wled_start_breathe
+        data:
+          r: "{{ breathe_rgb[0] }}"
+          g: "{{ breathe_rgb[1] }}"
+          b: "{{ breathe_rgb[2] }}"
+          breathe_sx: "{{ states('input_number.homebox_breathe_effect_speed') | int(128) }}"
+      - service: rest_command.wled_jkl_start_breathe
+        continue_on_error: true
         data:
           r: "{{ breathe_rgb[0] }}"
           g: "{{ breathe_rgb[1] }}"

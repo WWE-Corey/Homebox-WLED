@@ -322,6 +322,46 @@ action:
                    else (rows2 - 1 - row_map[row_letter]) if (is_valid and unit_number == 2)
                    else none }}
 
+          # ---- Bin sets J, K, L (second WLED controller) ----
+          # Drawers under a parent named exactly "J", "K" or "L" (no unit
+          # number — these are single bins, not A1/A2-style stacked
+          # pairs) are lit on the second controller instead. Drawer code
+          # is the same ROW-LETTER-COLUMN-NUMBER convention as A-I (e.g.
+          # "C-04"), row A on top. Every set has 6 X LEDs; Y LEDs are one
+          # per row (J: 6 rows, K/L: 8 rows). Wiring matches A-I: each
+          # set's strip starts bottom-left, Y runs up, then X runs
+          # left-to-right, so y_index counts down from the top row.
+          #   J: 6 rows x 3 cols — every row wide (code 01=LED 1+2,
+          #      02=3+4, 03=5+6)
+          #   K/L: 8 rows — rows A-E have 6 single-LED columns; rows F-H
+          #      have 3 wide columns (same wide mapping as J)
+          # wide_from is the first row index (A=0) that uses wide bins.
+          # Segment IDs are on the NEW controller (see
+          # jkl-create-segments.sh), not the A-I one.
+          - variables:
+              jkl_map:
+                J: {y_seg: 0, x_seg: 3, rows: 6, wide_from: 0}
+                K: {y_seg: 1, x_seg: 4, rows: 8, wide_from: 5}
+                L: {y_seg: 2, x_seg: 5, rows: 8, wide_from: 5}
+              jkl_six_col_map: {"1": [1], "2": [2], "3": [3], "4": [4], "5": [5], "6": [6]}
+              jkl_wide_col_map: {"1": [1, 2], "2": [3, 4], "3": [5, 6]}
+              jkl_set: "{{ parent_name | upper | trim }}"
+              jkl_in_set: "{{ jkl_set in jkl_map }}"
+              jkl_row_index: "{{ row_map[row_letter] if code_valid else none }}"
+              jkl_wide: "{{ jkl_in_set and code_valid and jkl_row_index >= jkl_map[jkl_set].wide_from }}"
+              jkl_col_map: "{{ jkl_wide_col_map if jkl_wide else jkl_six_col_map }}"
+              jkl_valid: >-
+                {{ jkl_in_set and code_valid and jkl_row_index < jkl_map[jkl_set].rows
+                   and (col_number | int | string) in jkl_col_map }}
+              jkl_y_seg_id: "{{ jkl_map[jkl_set].y_seg if jkl_valid else none }}"
+              jkl_x_seg_id: "{{ jkl_map[jkl_set].x_seg if jkl_valid else none }}"
+              jkl_slots: "{{ jkl_col_map[col_number | int | string] if jkl_valid else [] }}"
+              jkl_x_indices: >-
+                {{ [jkl_slots[0] - 1] if jkl_slots | length == 1
+                   else [jkl_slots[0] - 1, jkl_slots[1] - 1] if jkl_slots | length == 2
+                   else [] }}
+              jkl_y_index: "{{ (jkl_map[jkl_set].rows - 1 - jkl_row_index) if jkl_valid else none }}"
+
           # Powers WLED back on as its own completed request first, in
           # case a previous idle cycle put it to sleep — see the comment
           # on wled_power_on in rest_commands.yaml for why this can't
@@ -331,6 +371,11 @@ action:
           # hardware itself needs a moment to settle after being
           # re-enabled, not just a separate on/off API call.
           - service: rest_command.wled_power_on
+          # continue_on_error on every J-K-L call: a second, separately
+          # powered controller being offline must never stop the A-I
+          # highlight (or vice versa) from running.
+          - service: rest_command.wled_jkl_power_on
+            continue_on_error: true
           # Same idle period also turns the display's backlight off (see
           # the off_delay branch below) to save its lifespan — turn it
           # back on unconditionally here too, same "always call it, it's
@@ -344,7 +389,12 @@ action:
             continue_on_error: true
           - delay:
               milliseconds: 300
+          # Both controllers are cleared on every navigation so a
+          # highlight on one wall never lingers while you look up
+          # something on the other.
           - service: rest_command.wled_clear_all
+          - service: rest_command.wled_jkl_clear_all
+            continue_on_error: true
           - if:
               - condition: template
                 value_template: "{{ is_valid }}"
@@ -355,6 +405,18 @@ action:
                   x_seg_id: "{{ x_seg_id }}"
                   x_indices: "{{ x_indices }}"
                   y_index: "{{ y_index }}"
+                  color: "{{ highlight_color }}"
+          - if:
+              - condition: template
+                value_template: "{{ jkl_valid }}"
+            then:
+              - service: rest_command.wled_jkl_set_xy
+                continue_on_error: true
+                data:
+                  y_seg_id: "{{ jkl_y_seg_id }}"
+                  x_seg_id: "{{ jkl_x_seg_id }}"
+                  x_indices: "{{ jkl_x_indices }}"
+                  y_index: "{{ jkl_y_index }}"
                   color: "{{ highlight_color }}"
 
       # Checked every minute: how long since the last real webhook call,
@@ -376,6 +438,8 @@ action:
                      and not is_state('input_boolean.homebox_powered_off_internal', 'on') }}
             then:
               - service: rest_command.wled_power_off
+              - service: rest_command.wled_jkl_power_off
+                continue_on_error: true
               # Reuses the same off_delay as WLED's power-off, on the
               # theory that if the LEDs have been idle long enough to
               # power off, the display isn't being looked at either —
@@ -399,6 +463,13 @@ action:
                         highlight_color[2:4] | int(0, 16),
                         highlight_color[4:6] | int(0, 16)] }}
               - service: rest_command.wled_start_breathe
+                data:
+                  r: "{{ breathe_rgb[0] }}"
+                  g: "{{ breathe_rgb[1] }}"
+                  b: "{{ breathe_rgb[2] }}"
+                  breathe_sx: "{{ states('input_number.homebox_breathe_effect_speed') | int(128) }}"
+              - service: rest_command.wled_jkl_start_breathe
+                continue_on_error: true
                 data:
                   r: "{{ breathe_rgb[0] }}"
                   g: "{{ breathe_rgb[1] }}"

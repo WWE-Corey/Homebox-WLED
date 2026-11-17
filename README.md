@@ -328,6 +328,36 @@ column B.
   request-bundling quirk — see `wled_power_on` in `rest_commands.yaml`
   and the `delay` step right after it in `automation.yaml`.
 
+## Bin sets J, K, L (second WLED controller)
+
+J, K and L are on a different wall, too far to wire from the A-I
+controller, so they have their own WLED controller, their own
+`rest_command`s (`wled_jkl_*` in `rest_commands.yaml`) and their own
+segment IDs (0-5). The same Home Assistant automation drives both
+controllers: every navigation clears both, then lights the one drawer on
+whichever controller owns it; idle breathe and power-off go to both. Every
+J-K-L call is `continue_on_error`, so one controller being offline never
+blocks the other.
+
+Unlike A-I these are single bins, not stacked A1/A2 pairs — a drawer's
+parent is just `J`, `K` or `L`, and drawers are named `A-01` (row letter,
+column number; row A on top). Every set has **6 X LEDs**:
+
+| Set | Rows (Y LEDs) | Layout | LEDs (Y+X) | Y seg | X seg | Global Y | Global X |
+|---|---|---|---|---|---|---|---|
+| J | 6 (A-F) | 3 columns, every row wide | 12 | 0 | 3 | 0-5 | 6-11 |
+| K | 8 (A-H) | A-E: 6 columns; F-H: 3 wide | 14 | 1 | 4 | 12-19 | 20-25 |
+| L | 8 (A-H) | A-E: 6 columns; F-H: 3 wide | 14 | 2 | 5 | 26-33 | 34-39 |
+
+Wide drawers light 2 X LEDs (same as A-I): `01` = LEDs 1+2, `02` = 3+4,
+`03` = 5+6. Narrow drawers (K/L rows A-E) light one. Wiring is assumed
+identical to A-I (strip starts bottom-left, Y up, then X left-to-right,
+chained J→K→L on one bus) — **unconfirmed until the strips are installed**:
+see `jkl-bus-config.json` (pin 16 is a placeholder for the new board) and
+`jkl-create-segments.sh`, and step through indices on one segment to check
+the real order. Wiring differences are a one-time offset/direction fix in
+`jkl_map` / the segment boundaries, not a redesign.
+
 ## Idle behavior
 
 If nothing happens for a while after a drawer is highlighted (or

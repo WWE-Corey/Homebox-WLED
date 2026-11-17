@@ -1,0 +1,10 @@
+{
+  "hw": {
+    "led": {
+      "total": 40,
+      "ins": [
+        { "start": 0, "len": 40, "pin": [16], "order": 0, "rev": false, "type": 22 }
+      ]
+    }
+  }
+}
