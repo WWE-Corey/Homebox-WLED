@@ -188,3 +188,29 @@ Gotchas section — the current design (activity counter + `time_pattern`
 trigger) doesn't listen for the webhook a second time anywhere, so this
 shouldn't reappear, but it's the thing to watch for if the idle logic is
 ever changed again.
+
+## 7. Bin sets J, K, L (second WLED controller)
+
+The J-K-L controller is a separate WLED, so everything above applies
+again with its own IP and segment IDs 0-5 (`seglc` should show 6 entries
+after `jkl-create-segments.sh`). Everything *except* the LED lighting is
+shared with A-I and needs no J-K-L-specific setup: Homebox search/lookup,
+the nginx tap, `display_automation.yaml` (the handheld display shows
+`"J A-01"` style codes — parent name + drawer code, same rule as
+`"A1 A-01"`), the acknowledge/quantity flow, `flash_bin.py`/the web UI
+(they call the same webhook by UUID), and label printing (groups by
+parent name).
+
+Per-set smoke tests (use real drawer UUIDs in the webhook from section 2):
+
+- **J** `F-03` → Y seg 0 index 0, X seg 3 indices `[4, 5]`; `A-01` → Y index 5, X `[0, 1]`.
+- **K/L** `A-06` → Y seg 1/2 index 7, X seg 4/5 index `[5]` (single);
+  `F-01` → Y index 2, X `[0, 1]` (wide); `H-03` → Y index 0, X `[4, 5]`.
+- Out-of-range codes (J `G-01`, K `A-07`, L `H-04`) must light nothing.
+- Viewing an A-I drawer must clear any J-K-L highlight, and vice versa.
+- Idle: after the breathe delay both controllers breathe; after the
+  power-off delay both power off; the next lookup wakes both.
+- Handheld display: look up an item stored in a J/K/L drawer, confirm the
+  location code, adjust quantity and acknowledge — Homebox quantity
+  updates and both walls go to breathe.
+- Physical order: repeat section 5 per segment pair (J Y = 6 LEDs, K/L Y = 8).
