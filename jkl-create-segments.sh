@@ -30,6 +30,19 @@ curl -X POST "http://${WLED_IP}/json/state" \
     {"id":5,"start":34,"stop":40}
   ]}'
 
+# WLED does NOT keep segments created through /json/state across a
+# reboot/power cycle (confirmed live 2026-11-23: after a power cycle the
+# controller came back with one full-length segment, and HA showed the
+# Segment 2-5 entities as unavailable). The A-I controller survives this
+# by storing its layout as preset 1 and booting into it; do the same here:
+# save the current segments as preset 1, then make preset 1 the boot preset.
+curl -s -X POST "http://${WLED_IP}/json/state" \
+  -H "Content-Type: application/json" \
+  -d '{"psave":1,"n":"Solid","ib":true,"sb":true}' > /dev/null
+curl -s -X POST "http://${WLED_IP}/json/cfg" \
+  -H "Content-Type: application/json" \
+  -d '{"def":{"ps":1,"on":true,"bri":128}}'
+
 echo
-echo "Verify with:"
+echo "Verify with (seglc should list 6 entries, bootps 1, and survive a reboot):"
 echo "curl http://${WLED_IP}/json/info | grep -o '\"seglc\":\[[^]]*\]'"
